@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#b4532a">
+  <!-- Only talk to ourselves, GitHub's API, and Anthropic's API (plus an optional proxy you configure). -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src * data: blob:; connect-src 'self' https://api.github.com https://api.anthropic.com https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Recipe Box</title>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23b4532a'/%3E%3Ctext x='50' y='68' font-size='56' text-anchor='middle' fill='white' font-family='Georgia'%3ER%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+  <header class="topbar">
+    <a href="#/" class="brand">Recipe Box</a>
+    <div class="search-wrap">
+      <input id="search" type="search" placeholder="Search recipes, ingredients, notes…" autocomplete="off" aria-label="Search recipes">
+    </div>
+    <nav class="top-actions">
+      <a href="#/add" class="btn primary">+ Add</a>
+      <a href="#/bulk" class="btn ghost hide-sm">Bulk import</a>
+      <a href="#/settings" class="btn ghost" aria-label="Settings" title="Settings">⚙</a>
+    </nav>
+  </header>
+  <div id="sync" class="sync" aria-live="polite"></div>
+  <main id="app"></main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/util.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/parse.js"></script>
+  <script src="js/claude.js"></script>
+  <script src="js/zip.js"></script>
+  <script src="js/bulk.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
