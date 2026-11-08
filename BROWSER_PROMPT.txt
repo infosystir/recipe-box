@@ -18,6 +18,7 @@ Please collect my saved Facebook and Instagram posts so I can import them into m
 - `title`: a short name for the dish or place, if obvious
 - `caption`: the full caption text. Click "See more" or "more" to expand it first.
 - `links`: any URLs in the caption, plus links the author put in their own comment. Creators often post the recipe link or the restaurant's handle in the first comment.
+- `author_comments`: the full text of any comments the author left on their own post (expand "See more" first). Creators often put the whole recipe there.
 - `location`: the location tag, if the post has one (important for restaurants)
 
 **Rules**

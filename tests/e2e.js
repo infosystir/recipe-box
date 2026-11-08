@@ -332,7 +332,7 @@ function proxyRoute(route) {
 
   // 12. pasted list from a browser run (mixed types, location tag, existing skip)
   const pasted = 'Here is batch 1:\n```json\n' + JSON.stringify([
-    { url: 'https://www.instagram.com/p/SMASH1/', platform: 'instagram', collection: 'All posts', type: 'restaurant', author: 'colsfood', title: 'Smash burgers', caption: 'Smash burger heaven [ok] "quoted"', location: 'Example Diner, Columbus' },
+    { url: 'https://www.instagram.com/p/SMASH1/', platform: 'instagram', collection: 'All posts', type: 'restaurant', author: 'colsfood', title: 'Smash burgers', caption: 'Smash burger heaven [ok] "quoted"', location: 'Example Diner, Columbus', author_comments: ['Open til 2am, get the double'] },
     { url: 'https://www.instagram.com/p/MEME/', platform: 'instagram', collection: 'All posts', type: 'unsure', author: 'memes', caption: 'lol cats' },
   ]) + '\n```\nBatch 2:\n' + JSON.stringify([
     { url: 'https://www.facebook.com/x/posts/9', platform: 'facebook', collection: 'restaurants', author: 'LEL', caption: 'Lake Erie Lookup has the best perch', links: [] },
@@ -359,6 +359,7 @@ function proxyRoute(route) {
   assert.ok(diner && diner.source.postUrl.includes('SMASH1'));
   const smashCall = claudeCalls.find((c) => /SMASH1/.test(c.body.messages[0].content));
   assert.ok(smashCall.body.messages[0].content.includes('Location tag: Example Diner, Columbus'));
+  assert.ok(smashCall.body.messages[0].content.includes('Comment by the author: Open til 2am, get the double'));
   assert.ok(!smashCall.body.system.includes('RECIPES\n'), 'restaurant-only prompt');
   console.log('✓ pasted list import (mixed recipe/restaurant)');
 

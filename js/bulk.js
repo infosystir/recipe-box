@@ -242,7 +242,7 @@
   /**
    * A pasted list, e.g. from a Claude in Chrome run over saved collections.
    * Accepts one or more JSON arrays (batches) of
-   *   {type: "recipe"|"restaurant"|"unsure", platform, collection, url, author, title, caption, links:[]}
+   *   {type: "recipe"|"restaurant"|"unsure", platform, collection, url, author, title, caption, links:[], author_comments:[]}
    * or, failing that, plain text with one post per block separated by blank lines.
    */
   function listCandidates(text) {
@@ -270,7 +270,9 @@
       const coll = String(it.collection || '');
       const want = /restaurant/.test(type) || /restaurant/i.test(coll) ? 'restaurant' : /recipe/.test(type) || /recipe/i.test(coll) ? 'recipe' : 'auto';
       const url = it.url || it.postUrl || it.link || '';
-      const caption = [it.caption || it.text || '', it.location ? 'Location tag: ' + it.location : '', ...(Array.isArray(it.links) ? it.links : [])].filter(Boolean).join('\n').trim();
+      // Creators often put the recipe itself in their own first comment.
+      const own = (Array.isArray(it.author_comments) ? it.author_comments : []).filter(Boolean).map((c) => 'Comment by the author: ' + c);
+      const caption = [it.caption || it.text || '', ...own, it.location ? 'Location tag: ' + it.location : '', ...(Array.isArray(it.links) ? it.links : [])].filter(Boolean).join('\n').trim();
       const platform = String(it.platform || '').toLowerCase();
       const src = RB.sourceTypeFor(url, platform.includes('insta') ? 'instagram' : platform.includes('face') ? 'facebook' : 'manual');
       const author = it.author || it.creator || '';
