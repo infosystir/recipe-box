@@ -112,7 +112,7 @@ function proxyRoute(route) {
   await page.waitForURL(/#\/settings/);
   await page.fill('text=Your name >> xpath=.. >> input', 'Mando');
   await page.fill('input[placeholder="infosystir/recipe-box-data"]', 'infosystir/recipe-box-data');
-  await page.fill('input[placeholder="github_pat_…"]', 'github_pat_test');
+  await page.fill('input[placeholder^="github_pat_"]', 'github_pat_test');
   await page.fill('input[placeholder="sk-ant-…"]', 'sk-ant-test');
   await page.click('summary:has-text("proxy")');
   await page.fill('input[placeholder^="https://recipe-proxy"]', 'https://proxy.test/?url=');

@@ -965,10 +965,10 @@
     setTitle('Settings');
     const s = settings.load();
     const f = {
-      me: h('input', { type: 'text', value: s.me, placeholder: 'Mando', required: true }),
+      me: h('input', { type: 'text', value: s.me, placeholder: 'e.g. Mando', required: true }),
       mode: h('select', null, h('option', { value: 'github', selected: s.mode === 'github' }, 'Private GitHub repo (shared)'), h('option', { value: 'local', selected: s.mode === 'local' }, 'This browser only (trying it out)')),
-      ghRepo: h('input', { type: 'text', value: s.ghRepo, placeholder: 'infosystir/recipe-box-data' }),
-      ghToken: h('input', { type: 'password', value: s.ghToken, placeholder: 'github_pat_…', autocomplete: 'off' }),
+      ghRepo: h('input', { type: 'text', value: s.ghRepo || 'infosystir/recipe-box-data', placeholder: 'infosystir/recipe-box-data' }),
+      ghToken: h('input', { type: 'password', value: s.ghToken, placeholder: 'github_pat_… or ghp_…', autocomplete: 'off' }),
       ghPath: h('input', { type: 'text', value: s.ghPath }),
       ghBranch: h('input', { type: 'text', value: s.ghBranch, placeholder: 'default branch' }),
       claudeKey: h('input', { type: 'password', value: s.claudeKey, placeholder: 'sk-ant-…', autocomplete: 'off' }),
@@ -978,9 +978,28 @@
     };
     const modelList = h('datalist', { id: 'model-list' });
     const out = h('p', { class: 'muted', 'aria-live': 'polite' });
+    const ext = (href, text) => h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, text);
+    const ol = (...items) => h('ol', null, items.map((i) => h('li', null, i)));
+    const tokenHelp = h('div', null,
+      h('details', null, h('summary', null, 'How to get a token: I own the recipe repo'),
+        ol(['Open ', ext('https://github.com/settings/personal-access-tokens/new', 'GitHub → New fine-grained token'), ' (log in if asked).'],
+          'Token name: "Recipe Box" plus this device, e.g. "Recipe Box – phone".',
+          'Expiration: 1 year. Put a reminder in your calendar to renew it.',
+          'Repository access: "Only select repositories" → pick recipe-box-data.',
+          'Permissions → Repository permissions → Contents → "Read and write".',
+          'Click "Generate token", copy it (it starts with github_pat_ and is only shown once) and paste it into the GitHub token box above.')),
+      h('details', null, h('summary', null, 'How to get a token: someone shared the recipe repo with me'),
+        ol('Make a free GitHub account at github.com if you don’t have one, and tell the repo owner your GitHub username.',
+          'The owner opens recipe-box-data on GitHub → Settings → Collaborators → "Add people" and adds your username.',
+          ['You get an email invite. Click "Accept invitation" (or open ', ext('https://github.com/notifications', 'github.com/notifications'), ').'],
+          ['Open ', ext('https://github.com/settings/tokens/new?scopes=repo&description=Recipe%20Box', 'GitHub → New classic token'), '. This link fills in the name and ticks "repo" for you.'],
+          'Expiration: 1 year (or "No expiration"). Leave "repo" ticked and nothing else.',
+          'Scroll down, click "Generate token", copy it (it starts with ghp_ and is only shown once) and paste it into the GitHub token box above.'),
+        h('p', { class: 'muted small' }, 'Why a different kind of token: GitHub’s fine-grained tokens can’t reach a repo owned by another person’s account, so shared users need a classic one.')));
     const gh = h('div', null,
-      field('Data repo', f.ghRepo, 'owner/name of the PRIVATE repo that holds recipes.json'),
-      field('GitHub token', f.ghToken, 'Fine-grained token with Contents: Read and write on just that repo.'),
+      field('Data repo (required)', f.ghRepo, 'Where your recipes are saved. Leave as infosystir/recipe-box-data unless you set up your own.'),
+      field('GitHub token (required)', f.ghToken, 'Lets this device read and save recipes. Each person and each device gets their own token. Steps below.'),
+      tokenHelp,
       h('details', null, h('summary', null, 'Advanced'), h('div', { class: 'row wrap' }, field('File path', f.ghPath), field('Branch', f.ghBranch))));
     const toggle = () => (gh.style.display = f.mode.value === 'github' ? '' : 'none');
     f.mode.addEventListener('change', toggle);
@@ -1020,9 +1039,9 @@
         out.textContent = 'Saved, but couldn’t connect: ' + err.message;
       }
     } },
-      field('Your name', f.me, 'Used for ratings and “who made it”. Each of you sets this on your own device.'),
+      field('Your name (required)', f.me, 'Your first name or nickname. Ratings and “we made this” are tagged with it, so each person uses their own name on their own devices.'),
       h('h2', null, 'Where recipes are stored'),
-      field('Storage', f.mode),
+      field('Storage', f.mode, 'Choose “Private GitHub repo” so you both see the same recipes.'),
       gh,
       h('h2', null, 'Importing'),
       field('Claude API key (optional)', f.claudeKey, 'Only needed to pull recipes and places from links and posts. Without it you can still browse, search, add by hand, rate and log. From console.anthropic.com; set a monthly spend limit there. Stored only in this browser.'),
@@ -1074,7 +1093,7 @@
       !settings.isConfigured ? h('div', { class: 'callout' }, h('strong', null, 'Welcome! '), 'Set your name and where recipes live. The Claude key is optional. The README in the repo walks through creating the private data repo and tokens.') : null,
       form,
       h('h2', null, 'Backup'), backup,
-      h('p', { class: 'muted small' }, 'Tokens and keys stay in this browser’s storage and are only sent to api.github.com and api.anthropic.com.'));
+      h('p', { class: 'muted small' }, 'Your token and Claude key are saved only in this browser on this device. They are not stored in either repo and do not sync, so each phone or computer needs them entered once. They are sent only to api.github.com and api.anthropic.com. Clearing this browser’s site data removes them.'));
   }
 
   function notFound() {
