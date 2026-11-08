@@ -10,7 +10,7 @@ const OUT = path.join(__dirname, 'out') + '/';
 require('fs').mkdirSync(OUT, { recursive: true });
 
 // ---- fake GitHub ----
-let gh = { content: null, sha: null, n: 0, puts: 0, conflicts: 0 };
+let gh = { content: null, sha: null, n: 0, puts: 0, conflicts: 0, imports: null };
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 function ghRoute(route) {
   const req = route.request();
@@ -19,7 +19,8 @@ function ghRoute(route) {
   if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
   if (url.pathname === '/repos/infosystir/recipe-box-data') return json(200, { full_name: 'infosystir/recipe-box-data', private: true, permissions: { push: true } });
   if (url.pathname === '/repos/infosystir/recipe-box-data/contents/imports/saved-posts.json') {
-    return json(200, { sha: 'imp1', content: b64(JSON.stringify([{ url: 'https://www.instagram.com/p/FROMREPO/', platform: 'instagram', collection: 'All posts', type: 'recipe', author: 'repo_cook', caption: 'Repo loaded chili with beans and cumin' }])), encoding: 'base64' });
+    if (!gh.imports) return json(404, { message: 'Not Found' });
+    return json(200, { sha: 'imp1', content: b64(JSON.stringify(gh.imports)), encoding: 'base64' });
   }
   if (url.pathname === '/repos/infosystir/recipe-box-data/contents/recipes.json') {
     if (req.method() === 'GET') {
@@ -341,10 +342,37 @@ function proxyRoute(route) {
     { url: 'https://www.facebook.com/x/posts/9', platform: 'facebook', collection: 'restaurants', author: 'LEL', caption: 'Lake Erie Lookup has the best perch', links: [] },
     { url: 'https://www.facebook.com/somecreator/posts/12345', platform: 'facebook', collection: 'recipes', caption: 'already imported one' },
   ]);
+  // saved posts in the data repo show up on page load, once, and deletions stick
+  gh.imports = [{ url: 'https://www.instagram.com/p/FROMREPO/', platform: 'instagram', collection: 'All posts', type: 'recipe', author: 'repo_cook', title: 'Repo chili', caption: 'Repo loaded chili with beans and cumin' }];
+  const countSp = () => JSON.parse(gh.content).recipes.filter((r) => /^sp-/.test(r.id) && !r.deleted).length;
+  await page.goto(BASE + '#/');
+  await page.reload();
+  await page.waitForSelector('text=Added 1 saved posts');
+  await page.waitForFunction(() => document.getElementById('sync').textContent === '');
+  assert.equal(countSp(), 1);
+  const spStub = JSON.parse(gh.content).recipes.find((r) => /^sp-/.test(r.id));
+  assert.ok(spStub.needsRecipe && spStub.source.postUrl.includes('FROMREPO') && spStub.tags.includes('saved post'));
+  await page.fill('#search', 'cumin');
+  await page.waitForSelector('.card:has-text("Repo chili")');
+  await page.fill('#search', '');
+  await page.waitForSelector('text=saved posts still need the actual recipe');
+  await page.reload();
+  await page.waitForSelector('text=Repo chili');
+  await page.waitForTimeout(500);
+  assert.equal(countSp(), 1, 'no duplicate on reload');
+  await page.goto(BASE + '#/r/' + spStub.id);
+  await page.click('button:has-text("Delete recipe")');
+  await page.waitForFunction(() => document.getElementById('sync').textContent === '');
+  await page.reload();
+  await page.waitForTimeout(800);
+  assert.equal(countSp(), 0, 'deleted saved post stays deleted');
+  console.log('✓ saved posts auto-added from data repo');
+
   await page.goto(BASE + '#/bulk');
   await page.click('button:has-text("Load saved posts from the data repo")');
   await page.waitForSelector('text=Added 1 items from imports/saved-posts.json');
-  assert.ok(await page.$('text=Repo loaded chili'), 'repo list shows up');
+  assert.ok(await page.$('text=Repo chili'), 'repo list shows up');
+  gh.imports = null;
   console.log('✓ load saved posts from data repo');
   await page.goto(BASE + '#/');
   await page.goto(BASE + '#/bulk');

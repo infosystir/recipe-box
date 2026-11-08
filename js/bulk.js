@@ -474,5 +474,47 @@
     return { stop: () => ctrl.abort() };
   }
 
-  RB.bulk = { gather, runQueue, listCandidates, finalize, metaCandidates, emailCandidates, chunkText };
+  const SAVED_POSTS = 'imports/saved-posts.json';
+
+  /** Stable id per post, so two devices syncing at once can't create duplicates and deletions stick. */
+  function postId(url) {
+    let x = 0x811c9dc5;
+    for (const ch of RB.normalizeUrl(url)) x = Math.imul(x ^ ch.charCodeAt(0), 0x01000193) >>> 0;
+    return 'sp-' + x.toString(36);
+  }
+
+  /**
+   * Add every post in the data repo's imports/saved-posts.json that isn't in the box yet,
+   * as a "needs recipe" stub (no Claude, no cost). Returns how many were added.
+   */
+  async function syncSavedPosts() {
+    const backend = RB.store.backend;
+    if (!backend || !backend.readText) return 0;
+    let text;
+    try {
+      ({ text } = await backend.readText(SAVED_POSTS));
+    } catch (e) {
+      if (e.status === 404) return 0;
+      throw e;
+    }
+    const d = RB.store.data;
+    const seen = new Set([...d.recipes, ...d.restaurants].map((r) => r.id)); // includes deleted markers
+    const recs = [];
+    const places = [];
+    for (const c of listCandidates(text)) {
+      if (!c.url) continue;
+      const id = postId(c.url);
+      if (seen.has(id) || RB.store.hasPost(c.url)) continue;
+      seen.add(id);
+      const source = { type: c.sourceType, url: '', author: c.author, postUrl: c.url };
+      if (c.want === 'restaurant') places.push(RB.newRestaurant({ id, name: c.title, source, originalText: c.text, tags: ['saved post'] }));
+      else recs.push(RB.newRecipe({ id, title: c.title, source, originalText: c.text, needsRecipe: true, tags: c.want === 'auto' ? ['saved post', 'check type'] : ['saved post'] }));
+    }
+    if (places.length) await RB.store.upsert(places, '', { defer: true, coll: 'restaurants' });
+    if (recs.length) await RB.store.upsert(recs, '', { defer: true });
+    if (recs.length || places.length) await RB.store.save(`Add ${recs.length + places.length} saved posts`);
+    return recs.length + places.length;
+  }
+
+  RB.bulk = { gather, runQueue, listCandidates, finalize, metaCandidates, emailCandidates, chunkText, syncSavedPosts, postId, SAVED_POSTS };
 })();

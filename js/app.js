@@ -16,6 +16,7 @@
     ['notmade', 'Not made yet'],
     ['want', 'Want to make'],
     ['needs', 'Needs recipe'],
+    ['notfound', 'Recipe not found'],
   ];
   const SORT_OPTS = [
     ['recent', 'Recently added'],
@@ -80,7 +81,7 @@
     return {
       title: norm(r.title),
       meta: norm([...(r.categories || []), ...(r.tags || []), r.cuisine, r.source?.author, r.source?.name].join(' ')),
-      body: norm([...(r.ingredients || []), r.notes, r.description, ...(r.madeLog || []).map((m) => m.where + ' ' + m.notes)].join(' ')),
+      body: norm([...(r.ingredients || []), r.notes, r.description, r.originalText, ...(r.madeLog || []).map((m) => m.where + ' ' + m.notes)].join(' ')),
     };
   }
   function score(r, terms) {
@@ -105,6 +106,7 @@
         case 'notmade': return !made && !r.needsRecipe;
         case 'want': return r.wantToMake;
         case 'needs': return r.needsRecipe;
+        case 'notfound': return r.needsRecipe && (r.tags || []).includes(NOT_FOUND);
         default: return true;
       }
     });
@@ -122,6 +124,39 @@
   }
 
   // ---------- views ----------
+  let filling = null; // {stop, done, total, found}
+  /** "N saved posts need recipes" with one button to fill them in. Only on devices with a Claude key. */
+  function fillBanner() {
+    const todo = store.recipes.filter((r) => r.needsRecipe && (r.tags || []).includes('saved post') && !(r.tags || []).includes(NOT_FOUND));
+    if (!filling && (!todo.length || !settings.load().claudeKey)) return null;
+    if (filling) {
+      return h('div', { class: 'callout row wrap' }, h('span', null, `Filling in recipes: ${filling.done} of ${filling.total} done, ${filling.found} found.`),
+        h('button', { class: 'btn small', type: 'button', onclick: () => { filling.stopped = true; } }, 'Stop'));
+    }
+    return h('div', { class: 'callout row wrap' },
+      h('span', null, `${todo.length} saved posts still need the actual recipe. `, h('span', { class: 'muted small' }, `About 2–10¢ each on your Claude key.`)),
+      h('button', { class: 'btn primary small', type: 'button', onclick: async () => {
+        filling = { done: 0, total: todo.length, found: 0, stopped: false };
+        render();
+        for (const r of todo) {
+          if (filling.stopped) break;
+          try {
+            const res = await fillStub(store.get(r.id) || r);
+            if (res.found) filling.found++;
+          } catch (e) {
+            toast(e.message, 'error');
+            if (e.status === 401 || e.status === 403) break;
+          }
+          filling.done++;
+          if (document.body.dataset.route === 'home') render();
+        }
+        const f = filling;
+        filling = null;
+        toast(`Found ${f.found} of ${f.done} recipes.` + (f.done - f.found ? ' The rest are under “Recipe not found”.' : ''));
+        if (document.body.dataset.route === 'home') render();
+      } }, 'Fill them in'));
+  }
+
   function viewLibrary() {
     setTitle('');
     const cats = store.categories();
@@ -152,7 +187,7 @@
     } else {
       body = h('div', { class: 'grid' }, list.map(card));
     }
-    return h('section', null, controls, catBar, h('p', { class: 'count' }, `${list.length} of ${store.recipes.length} recipes`), body);
+    return h('section', null, fillBanner(), controls, catBar, h('p', { class: 'count' }, `${list.length} of ${store.recipes.length} recipes`), body);
   }
 
   function card(r) {
@@ -273,27 +308,42 @@
         h('button', { class: 'btn danger', type: 'button', onclick: async () => { if (!confirm(`Delete "${r.title}"?`)) return; await store.remove(r.id).catch((e) => toast(e.message, 'error')); location.hash = '#/'; } }, 'Delete recipe')));
   }
 
+  const NOT_FOUND = 'recipe not found';
+  /**
+   * Ask Claude for the real recipe behind a stub and save it in place (keeping ratings, notes, etc.).
+   * When nothing is found, tag it so it can be filtered and isn't retried automatically.
+   */
+  async function fillStub(r, text) {
+    const res = await RB.claude.importAny({ text: text || r.originalText || r.source?.url || r.source?.postUrl, hint: `Recipe titled "${r.title}"${r.source?.author ? ' by ' + r.source.author : ''}`, postUrl: r.source?.postUrl, sourceType: r.source?.type, author: r.source?.author, kind: 'post', want: 'recipe' });
+    const found = res.recipes.find((x) => !x.needsRecipe);
+    if (!found) {
+      if (!(r.tags || []).includes(NOT_FOUND)) await store.upsert({ ...r, tags: [...(r.tags || []), NOT_FOUND] }, 'Recipe not found: ' + r.title);
+      return { found: false, message: res.message };
+    }
+    const merged = { ...found, id: r.id, ratings: r.ratings, madeLog: r.madeLog, notes: [r.notes, found.notes].filter(Boolean).join('\n\n'), favorite: r.favorite, wantToMake: r.wantToMake, addedBy: r.addedBy, createdAt: r.createdAt, needsRecipe: false, originalText: [r.originalText, found.originalText].filter(Boolean).join('\n\n---\n\n') };
+    merged.tags = (merged.tags || []).filter((t) => t !== NOT_FOUND);
+    merged.source = { ...found.source, postUrl: found.source.postUrl || r.source?.postUrl || '' };
+    await store.upsert(merged, 'Finish ' + merged.title);
+    return { found: true, title: merged.title };
+  }
+
   /** For stubs from bulk import: paste the caption or the real link to finish it. */
   function finishBox(r) {
     const ta = h('textarea', { rows: 4, placeholder: 'Paste the post caption, the recipe text, or a link to the recipe…' });
     const btn = h('button', { class: 'btn primary', type: 'button' }, 'Find the recipe');
     const status = h('p', { class: 'muted' });
     btn.addEventListener('click', async () => {
-      const text = ta.value.trim() || r.source?.url || r.source?.postUrl;
+      const text = ta.value.trim() || r.originalText || r.source?.url || r.source?.postUrl;
       if (!text) return;
       btn.disabled = true;
       status.textContent = 'Working… this can take up to a minute when it has to search.';
       try {
-        const res = await RB.claude.importAny({ text, hint: `Recipe titled "${r.title}"${r.source?.author ? ' by ' + r.source.author : ''}`, postUrl: r.source?.postUrl, sourceType: r.source?.type });
-        const found = res.recipes.find((x) => !x.needsRecipe);
-        if (!found) {
+        const res = await fillStub(r, text);
+        if (!res.found) {
           status.textContent = res.message || 'Still not found.';
           btn.disabled = false;
           return;
         }
-        const merged = { ...found, id: r.id, ratings: r.ratings, madeLog: r.madeLog, notes: [r.notes, found.notes].filter(Boolean).join('\n\n'), favorite: r.favorite, wantToMake: r.wantToMake, addedBy: r.addedBy, createdAt: r.createdAt, needsRecipe: false, originalText: [r.originalText, found.originalText].filter(Boolean).join('\n\n---\n\n') };
-        merged.source = { ...found.source, postUrl: found.source.postUrl || r.source?.postUrl || '' };
-        await store.upsert(merged, 'Finish ' + merged.title);
         toast('Recipe found and saved.');
         render();
       } catch (e) {
@@ -553,7 +603,7 @@
       if (!terms.length) return { p, s: 1 };
       const title = norm(p.name);
       const meta = norm([p.cuisine, p.city, p.neighborhood, ...(p.tags || [])].join(' '));
-      const body = norm([...(p.mustTry || []), p.notes, p.description, p.address, ...(p.visits || []).map((v) => v.ordered + ' ' + v.notes)].join(' '));
+      const body = norm([...(p.mustTry || []), p.notes, p.description, p.address, p.originalText, ...(p.visits || []).map((v) => v.ordered + ' ' + v.notes)].join(' '));
       let total = 0;
       for (const t of terms) {
         const s = (title.includes(t) ? 5 : 0) + (meta.includes(t) ? 3 : 0) + (body.includes(t) ? 1 : 0);
@@ -1047,6 +1097,8 @@
         const info = await store.backend.check();
         if (!info.canPush) throw new Error('That token can read the repo but not write to it.');
         await store.load();
+        const added = await RB.bulk.syncSavedPosts().catch(() => 0); // the inbox is optional; never block connecting
+        if (added) toast(`Added ${added} saved posts.`);
         out.textContent = `Connected to ${info.name}${info.private === false ? '. Warning: this repo is PUBLIC, so anyone can read your recipes. Make it private on GitHub.' : '.'}`;
         toast('Settings saved.');
       } catch (err) {
@@ -1191,6 +1243,8 @@
       render();
       try {
         await store.load();
+        const added = await RB.bulk.syncSavedPosts();
+        if (added) toast(`Added ${added} saved posts.`);
       } catch (e) {
         toast(e.message, 'error');
       }
