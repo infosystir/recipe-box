@@ -77,6 +77,7 @@
       if (owner) hintParts.push(`by ${isIG ? '@' : ''}${owner}`);
       if (named) hintParts.push(`titled "${named.s}"`);
       out.push({
+        want: /restaurant/i.test(path + ' ' + text.slice(0, 200)) ? 'restaurant' : 'auto',
         kind: text.length > 80 ? 'post' : 'link',
         sourceType: RB.SOCIAL.has(src) ? src : isIG ? 'instagram' : 'facebook',
         title,
@@ -182,6 +183,7 @@
       const d = new Date(hdr.date);
       if (!isNaN(d)) date = d.toISOString().slice(0, 10);
       out.push({
+        want: 'recipe',
         kind: 'email',
         sourceType: 'email',
         title: subject,
@@ -210,6 +212,7 @@
     // Long docs with many recipes get split into chunks Claude can handle in one reply.
     const chunks = chunkText(text, 25000);
     return chunks.map((t, i) => ({
+      want: 'recipe',
       kind: 'doc',
       sourceType: 'gdoc',
       title: base + (chunks.length > 1 ? ` (part ${i + 1} of ${chunks.length})` : ''),
@@ -233,6 +236,101 @@
       cur += (cur ? '\n\n' : '') + para;
     }
     if (cur) out.push(cur);
+    return out;
+  }
+
+  /**
+   * A pasted list, e.g. from a Claude in Chrome run over saved collections.
+   * Accepts one or more JSON arrays (batches) of
+   *   {type: "recipe"|"restaurant"|"unsure", platform, collection, url, author, title, caption, links:[]}
+   * or, failing that, plain text with one post per block separated by blank lines.
+   */
+  function listCandidates(text) {
+    const items = [];
+    const blocks = topLevelArrays(String(text));
+    for (const b of blocks) {
+      try {
+        const v = JSON.parse(b);
+        if (Array.isArray(v)) items.push(...v.filter((x) => x && typeof x === 'object'));
+      } catch {
+        /* not a JSON block; ignore */
+      }
+    }
+    if (!items.length) {
+      try {
+        const v = JSON.parse(text);
+        if (Array.isArray(v)) items.push(...v);
+        else if (v && Array.isArray(v.items)) items.push(...v.items);
+      } catch {
+        String(text).split(/\n\s*\n/).map((t) => t.trim()).filter(Boolean).forEach((t) => items.push({ caption: t, url: RB.findUrls(t)[0] || '' }));
+      }
+    }
+    return items.map((it) => {
+      const type = String(it.type || it.want || '').toLowerCase();
+      const coll = String(it.collection || '');
+      const want = /restaurant/.test(type) || /restaurant/i.test(coll) ? 'restaurant' : /recipe/.test(type) || /recipe/i.test(coll) ? 'recipe' : 'auto';
+      const url = it.url || it.postUrl || it.link || '';
+      const caption = [it.caption || it.text || '', it.location ? 'Location tag: ' + it.location : '', ...(Array.isArray(it.links) ? it.links : [])].filter(Boolean).join('\n').trim();
+      const platform = String(it.platform || '').toLowerCase();
+      const src = RB.sourceTypeFor(url, platform.includes('insta') ? 'instagram' : platform.includes('face') ? 'facebook' : 'manual');
+      const author = it.author || it.creator || '';
+      const title = it.title || (caption.split('\n')[0] || '').slice(0, 90) || (author ? author + "'s post" : url);
+      return {
+        want,
+        kind: caption.length > 40 ? 'post' : 'link',
+        sourceType: src,
+        title,
+        text: caption,
+        url,
+        postUrl: RB.SOCIAL.has(src) ? url : '',
+        author,
+        hint: [platform && `Saved on ${platform}`, coll && `in the "${coll}" collection`, author && `by ${author}`].filter(Boolean).join(' '),
+        date: it.date || '',
+        file: 'pasted list',
+        score: 1 + recipeScore(title + ' ' + caption),
+      };
+    });
+  }
+
+  /** Find every top-level [...] in text (bracket matching that respects JSON strings). */
+  function topLevelArrays(t) {
+    const out = [];
+    let depth = 0;
+    let start = -1;
+    let inStr = false;
+    for (let i = 0; i < t.length; i++) {
+      const ch = t[i];
+      if (inStr) {
+        if (ch === '\\') i++;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"' && depth > 0) inStr = true;
+      else if (ch === '[') {
+        if (depth === 0) start = i;
+        depth++;
+      } else if (ch === ']' && depth > 0) {
+        depth--;
+        if (depth === 0) out.push(t.slice(start, i + 1));
+      }
+    }
+    return out;
+  }
+
+  /** Mark duplicates/already-imported and pick defaults. */
+  function finalize(all) {
+    const seen = new Set();
+    const out = [];
+    for (const c of all) {
+      const key = c.url ? RB.normalizeUrl(c.url) : RB.norm(c.title + '|' + c.text.slice(0, 200));
+      if (seen.has(key)) continue;
+      seen.add(key);
+      c.id = RB.uid();
+      c.existing = !!(c.url && (RB.store.findBySource(c.url) || RB.store.hasPost(c.url)));
+      c.selected = !c.existing && (c.score > 0 || c.want === 'restaurant');
+      out.push(c);
+    }
+    out.sort((a, b) => b.score - a.score);
     return out;
   }
 
@@ -282,20 +380,7 @@
         notes.push(`Couldn't read ${name}: ${e.message}`);
       }
     }
-    // Dedupe by URL (or title+text for docs/emails) and flag ones already in the box.
-    const seen = new Set();
-    const out = [];
-    for (const c of all) {
-      const key = c.url ? RB.normalizeUrl(c.url) : RB.norm(c.title + '|' + c.text.slice(0, 200));
-      if (seen.has(key)) continue;
-      seen.add(key);
-      c.id = RB.uid();
-      c.existing = !!(c.url && RB.store.findBySource(c.url)) || RB.store.recipes.some((r) => r.source?.postUrl && c.url && RB.normalizeUrl(r.source.postUrl) === RB.normalizeUrl(c.url));
-      c.selected = !c.existing && c.score > 0;
-      out.push(c);
-    }
-    out.sort((a, b) => b.score - a.score);
-    return { candidates: out, notes };
+    return { candidates: finalize(all), notes };
   }
 
   /**
@@ -304,13 +389,13 @@
    */
   function runQueue(cands, { keepStubs = true, concurrency = 2 }, cb) {
     const ctrl = new AbortController();
-    const summary = { added: 0, stubs: 0, failed: 0, skipped: 0 };
+    const summary = { added: 0, places: 0, stubs: 0, neither: 0, failed: 0, skipped: 0 };
     const me = RB.settings.load().me;
     let idx = 0;
     let sinceSave = 0;
 
     async function one(c) {
-      if (c.existing || (c.url && RB.store.findBySource(c.url))) {
+      if (c.existing || (c.url && (RB.store.findBySource(c.url) || RB.store.hasPost(c.url)))) {
         summary.skipped++;
         cb.onItem(c, 'skipped', 'Already in your recipe box');
         return;
@@ -319,7 +404,7 @@
       for (let attempt = 0; attempt < 4; attempt++) {
         try {
           const res = await RB.claude.importAny(
-            { text: c.text, url: c.url, hint: [c.hint, c.title && c.kind !== 'doc' ? 'Title: ' + c.title : ''].filter(Boolean).join('. '), sourceType: c.sourceType, postUrl: c.postUrl, kind: c.kind },
+            { text: c.text, url: c.url, hint: [c.hint, c.title && c.kind !== 'doc' ? 'Title: ' + c.title : ''].filter(Boolean).join('. '), sourceType: c.sourceType, postUrl: c.postUrl, kind: c.kind, want: c.want || 'recipe', author: c.author },
             { signal: ctrl.signal }
           );
           let recs = res.recipes.filter((r) => !r.needsRecipe);
@@ -329,9 +414,14 @@
             r.addedBy = me;
             if (c.date && !r.notes) r.notes = '';
           });
-          if (recs.length) {
-            await RB.store.upsert(recs, 'Bulk import', { defer: true });
-            sinceSave += recs.length;
+          // Restaurants: skip ones already saved under the same name and city.
+          const places = (res.restaurants || []).filter((p) => !RB.store.findRestaurant(p.name, p.city));
+          places.forEach((p) => (p.addedBy = me));
+          if (places.length) await RB.store.upsert(places, 'Bulk import', { defer: true, coll: 'restaurants' });
+          summary.places += places.length;
+          if (recs.length || places.length) {
+            if (recs.length) await RB.store.upsert(recs, 'Bulk import', { defer: true });
+            sinceSave += recs.length + places.length;
             if (sinceSave >= 5) {
               sinceSave = 0;
               RB.store.save('Bulk import').catch(() => {});
@@ -340,7 +430,9 @@
           const found = recs.filter((r) => !r.needsRecipe).length;
           summary.added += found;
           summary.stubs += recs.length - found;
-          cb.onItem(c, found ? 'done' : recs.length ? 'stub' : 'none', found ? `Added ${recs.map((r) => r.title).join(', ')}` : res.message || 'No recipe found');
+          if (!recs.length && !places.length) summary.neither++;
+          const names = [...recs.filter((r) => !r.needsRecipe).map((r) => r.title), ...places.map((p) => 'Place: ' + p.name)];
+          cb.onItem(c, names.length ? 'done' : recs.length ? 'stub' : 'none', names.length ? `Added ${names.join(', ')}` : res.message || 'Nothing found');
           return;
         } catch (e) {
           if (ctrl.signal.aborted) return;
@@ -380,5 +472,5 @@
     return { stop: () => ctrl.abort() };
   }
 
-  RB.bulk = { gather, runQueue, metaCandidates, emailCandidates, chunkText };
+  RB.bulk = { gather, runQueue, listCandidates, finalize, metaCandidates, emailCandidates, chunkText };
 })();

@@ -50,7 +50,7 @@
     if (s.startsWith('#') || s.startsWith('/') || s.startsWith('./')) return s;
     try {
       const p = new URL(s);
-      return p.protocol === 'http:' || p.protocol === 'https:' ? p.href : null;
+      return p.protocol === 'http:' || p.protocol === 'https:' || p.protocol === 'tel:' ? p.href : null;
     } catch {
       return null;
     }

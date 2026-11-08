@@ -67,11 +67,20 @@ h3 { font-size: 1.05rem; margin: 0; }
 }
 .brand { font-family: var(--serif); font-weight: 700; font-size: 1.25rem; color: var(--text); text-decoration: none; white-space: nowrap; }
 .search-wrap { flex: 1; min-width: 0; }
+.tabs { display: flex; gap: 2px; background: var(--surface-2); border-radius: 10px; padding: 3px; }
+.tabs a { padding: 6px 12px; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 600; font-size: 0.92rem; white-space: nowrap; }
+.tabs a.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.seg { display: inline-flex; gap: 2px; background: var(--surface-2); border-radius: 10px; padding: 3px; flex-wrap: wrap; }
+.seg button { font: inherit; font-weight: 600; font-size: 0.9rem; border: 0; background: transparent; color: var(--muted); padding: 7px 14px; border-radius: 8px; cursor: pointer; }
+.seg button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.cand select { width: auto; padding: 2px 6px; font-size: 0.8rem; margin-left: 6px; }
+.links .btn { text-decoration: none; }
 #search { width: 100%; }
 .top-actions { display: flex; gap: 6px; }
 @media (max-width: 640px) {
   .topbar { flex-wrap: wrap; }
   .search-wrap { order: 3; flex-basis: 100%; }
+  .brand { display: none; }
   .top-actions { margin-left: auto; }
   .btn.hide-sm { display: none; }
 }

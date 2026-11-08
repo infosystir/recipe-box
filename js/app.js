@@ -360,7 +360,7 @@
     const form = h('form', { class: 'edit', onsubmit: async (e) => {
       e.preventDefault();
       const out = {
-        ...r,
+        ...stripKind(r),
         title: f.title.value.trim() || 'Untitled recipe',
         description: f.description.value.trim(),
         ingredients: lines(f.ingredients),
@@ -408,68 +408,90 @@
   }
 
   function viewAdd() {
-    setTitle('Add a recipe');
     const s = settings.load();
     if (pendingImport && pendingImport.length) return viewReview();
-    const ta = h('textarea', { rows: 8, placeholder: 'Paste a link to a recipe site, a Facebook or Instagram post (caption and all), or the recipe text itself.', autofocus: true });
-    const hint = h('input', { type: 'text', placeholder: 'Optional: e.g. "the soup from @halfbakedharvest"' });
+    let want = location.hash.includes('place') ? 'restaurant' : RB.storage.get('rb.addWant', 'auto');
+    setTitle('Add');
+    const ta = h('textarea', { rows: 8, placeholder: 'Paste a recipe link, a restaurant’s website or Yelp page, a Facebook or Instagram post (caption and all), or recipe text.', autofocus: true });
+    const hint = h('input', { type: 'text', placeholder: 'Optional: e.g. "the soup from @halfbakedharvest" or "taco place in Columbus"' });
     const status = h('p', { class: 'muted', 'aria-live': 'polite' });
     const btn = h('button', { class: 'btn primary', type: 'submit' }, 'Import');
-    let ctrl;
+    const seg = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'What is it?' });
+    const drawSeg = () =>
+      seg.replaceChildren(...[['auto', 'Figure it out'], ['recipe', 'Recipe'], ['restaurant', 'Restaurant']].map(([v, t]) =>
+        h('button', { type: 'button', class: want === v ? 'on' : '', role: 'radio', 'aria-checked': String(want === v), onclick: () => { want = v; RB.storage.set('rb.addWant', v); drawSeg(); } }, t)));
+    drawSeg();
     const form = h('form', { onsubmit: async (e) => {
       e.preventDefault();
       const text = ta.value.trim();
       if (!text) return;
-      const dup = RB.isUrlOnly(text) && store.findBySource(text);
+      const dup = RB.isUrlOnly(text) && (store.findBySource(text) || (store.hasPost(text) && [...store.recipes, ...store.restaurants].find((x) => [x.source?.url, x.source?.postUrl].some((u) => u && RB.normalizeUrl(u) === RB.normalizeUrl(text)))));
       if (dup) {
-        toast('Already in your recipe box.');
-        location.hash = '#/r/' + encodeURIComponent(dup.id);
+        toast('Already saved.');
+        location.hash = (dup.title ? '#/r/' : '#/p/') + encodeURIComponent(dup.id);
         return;
       }
       btn.disabled = true;
-      ctrl = new AbortController();
-      status.textContent = s.claudeKey ? 'Reading it… if the post hides the recipe, Claude will go find it (up to a minute).' : 'Reading it…';
+      status.textContent = s.claudeKey ? 'Reading it… if it has to search the web this can take up to a minute.' : 'Reading it…';
       try {
-        const res = await RB.claude.importAny({ text, hint: hint.value.trim() }, { signal: ctrl.signal });
-        if (!res.recipes.length) {
-          status.textContent = res.message || 'No recipe found in that.';
+        const res = await RB.claude.importAny({ text, hint: hint.value.trim(), want });
+        const items = [...res.recipes.map((r) => Object.assign(r, { _kind: 'recipe' })), ...(res.restaurants || []).map((r) => Object.assign(r, { _kind: 'restaurant' }))];
+        if (!items.length) {
+          status.textContent = res.message || 'Didn’t find a recipe or a restaurant in that.';
           btn.disabled = false;
           return;
         }
-        res.recipes.forEach((r) => (r.addedBy = me()));
-        pendingImport = res.recipes;
+        items.forEach((r) => (r.addedBy = me()));
+        pendingImport = items;
         pendingImport.message = res.message;
-        pendingImport.status = res.status;
-        if (res.recipes.length === 1) location.hash = '#/review/' + res.recipes[0].id;
+        if (items.length === 1) location.hash = '#/review/' + items[0].id;
         else render();
       } catch (err) {
         status.textContent = err.message;
         btn.disabled = false;
       }
     } },
+      h('div', { class: 'field' }, h('span', { class: 'label' }, 'What is it?'), seg),
       field('Link or post', ta),
       field('Anything that helps find it', hint),
-      h('div', { class: 'row' }, btn, h('a', { class: 'btn', href: '#/new' }, 'Type it in myself')),
+      h('div', { class: 'row wrap' }, btn, h('a', { class: 'btn', href: '#/new' }, 'Type in a recipe'), h('a', { class: 'btn', href: '#/pnew' }, 'Type in a restaurant')),
       status);
     return h('section', { class: 'narrow' },
-      h('h1', null, 'Add a recipe'),
+      h('h1', null, 'Add a recipe or restaurant'),
       !s.claudeKey ? h('div', { class: 'callout' }, 'Without a Claude API key, links only work through a proxy and posts are parsed by simple rules. ', h('a', { href: '#/settings' }, 'Add a key in Settings'), ' for the good stuff.') : null,
       form);
   }
 
+  function stripKind(x) {
+    const { _kind, ...rest } = x;
+    return rest;
+  }
+
   function viewReview() {
     const list = pendingImport || [];
+    const nR = list.filter((x) => x._kind === 'recipe').length;
+    const nP = list.length - nR;
     return h('section', { class: 'narrow' },
-      h('h1', null, `Found ${list.length} recipes`),
+      h('h1', null, `Found ${[nR && `${nR} recipe${nR > 1 ? 's' : ''}`, nP && `${nP} restaurant${nP > 1 ? 's' : ''}`].filter(Boolean).join(' and ')}`),
       list.message ? h('p', { class: 'muted' }, list.message) : null,
-      h('ul', { class: 'review-list' }, list.map((r) => h('li', null, h('a', { href: '#/review/' + r.id }, r.title), h('span', { class: 'muted' }, ` · ${r.ingredients.length} ingredients`), r.needsRecipe ? h('span', { class: 'badge warn' }, 'Needs recipe') : null))),
+      h('ul', { class: 'review-list' }, list.map((r) => h('li', null,
+        h('a', { href: '#/review/' + r.id }, r._kind === 'recipe' ? r.title : r.name),
+        h('span', { class: 'muted' }, r._kind === 'recipe' ? ` · recipe · ${r.ingredients.length} ingredients` : ` · restaurant${r.city ? ' · ' + r.city : ''}`),
+        r.needsRecipe ? h('span', { class: 'badge warn' }, 'Needs recipe') : null))),
       h('div', { class: 'row' },
         h('button', { class: 'btn primary', type: 'button', onclick: async () => {
           const all = pendingImport;
           pendingImport = null;
-          await store.upsert(all, `Add ${all.length} recipes`).catch((e) => toast(e.message, 'error'));
-          toast(`Saved ${all.length} recipes.`);
-          location.hash = '#/';
+          const recs = all.filter((x) => x._kind === 'recipe').map(stripKind);
+          const places = all.filter((x) => x._kind === 'restaurant').map(stripKind);
+          try {
+            if (recs.length) await store.upsert(recs, `Add ${recs.length} recipes`, { defer: !!places.length });
+            if (places.length) await store.upsert(places, `Add ${places.length} restaurants`, { coll: 'restaurants' });
+            toast(`Saved ${all.length}.`);
+          } catch (e) {
+            toast(e.message, 'error');
+          }
+          location.hash = places.length && !recs.length ? '#/places' : '#/';
         } }, 'Save all'),
         h('button', { class: 'btn', type: 'button', onclick: () => { pendingImport = null; render(); } }, 'Discard')));
   }
@@ -480,12 +502,308 @@
       location.hash = '#/add';
       return h('div');
     }
-    const view = viewEdit(null, r);
+    const view = r._kind === 'restaurant' ? viewPlaceEdit(null, r) : viewEdit(null, r);
     const msg = pendingImport.message;
     if (msg || r.needsRecipe) {
       view.insertBefore(h('div', { class: 'callout' + (r.needsRecipe ? ' warn' : '') }, msg || '', r.needsRecipe ? ' You can save it anyway and finish it later.' : ''), view.children[1]);
     }
     return view;
+  }
+
+  // ---------- Restaurants ----------
+  const PLACE_STATUS = [
+    ['all', 'All places'],
+    ['want', 'Want to go'],
+    ['been', 'We’ve been'],
+    ['fav', 'Favorites'],
+  ];
+  const PLACE_SORT = [
+    ['recent', 'Recently added'],
+    ['rating', 'Top rated'],
+    ['lastvisit', 'Recently visited'],
+    ['name', 'A–Z'],
+    ['city', 'By city'],
+  ];
+  const LINKS = [
+    ['website', 'Website'],
+    ['menu', 'Menu'],
+    ['reservations', 'Reservations'],
+    ['instagram', 'Instagram'],
+    ['facebook', 'Facebook'],
+    ['yelp', 'Yelp'],
+    ['tiktok', 'TikTok'],
+    ['googleMaps', 'Google Maps'],
+  ];
+  const uiP = RB.storage.get('rb.uiP', { status: 'all', sort: 'recent', city: '', cuisine: '' });
+  const saveUiP = () => RB.storage.set('rb.uiP', uiP);
+
+  const lastVisit = (p) => (p.visits || []).reduce((a, v) => (v.date > a ? v.date : a), '');
+  function mapsUrl(p) {
+    if (p.links?.googleMaps) return p.links.googleMaps;
+    const q = [p.name, p.address || p.neighborhood, p.city].filter(Boolean).join(', ');
+    return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
+  }
+  function placeLine(p) {
+    return [p.cuisine, p.priceRange, [p.neighborhood, p.city].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+  }
+
+  function filteredPlaces() {
+    const terms = norm(query).split(/\s+/).filter(Boolean);
+    let list = store.restaurants.map((p) => {
+      if (!terms.length) return { p, s: 1 };
+      const title = norm(p.name);
+      const meta = norm([p.cuisine, p.city, p.neighborhood, ...(p.tags || [])].join(' '));
+      const body = norm([...(p.mustTry || []), p.notes, p.description, p.address, ...(p.visits || []).map((v) => v.ordered + ' ' + v.notes)].join(' '));
+      let total = 0;
+      for (const t of terms) {
+        const s = (title.includes(t) ? 5 : 0) + (meta.includes(t) ? 3 : 0) + (body.includes(t) ? 1 : 0);
+        if (!s) return { p, s: 0 };
+        total += s;
+      }
+      return { p, s: total };
+    }).filter((x) => x.s > 0);
+    list = list.filter(({ p }) => {
+      const been = (p.visits || []).length > 0;
+      if (uiP.status === 'want' && been) return false;
+      if (uiP.status === 'been' && !been) return false;
+      if (uiP.status === 'fav' && !p.favorite) return false;
+      if (uiP.city && p.city !== uiP.city) return false;
+      if (uiP.cuisine && p.cuisine !== uiP.cuisine) return false;
+      return true;
+    });
+    const by = {
+      recent: (a, b) => (b.p.createdAt || '').localeCompare(a.p.createdAt || ''),
+      rating: (a, b) => avgRating(b.p) - avgRating(a.p),
+      lastvisit: (a, b) => lastVisit(b.p).localeCompare(lastVisit(a.p)),
+      name: (a, b) => a.p.name.localeCompare(b.p.name),
+      city: (a, b) => (a.p.city || '~').localeCompare(b.p.city || '~') || a.p.name.localeCompare(b.p.name),
+    }[uiP.sort];
+    list.sort((a, b) => (terms.length ? b.s - a.s : 0) || by(a, b));
+    return list.map((x) => x.p);
+  }
+
+  function viewPlaces() {
+    setTitle('Restaurants');
+    const count = (key) => {
+      const m = new Map();
+      store.restaurants.forEach((p) => p[key] && m.set(p[key], (m.get(p[key]) || 0) + 1));
+      return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([k]) => k);
+    };
+    const cities = count('city');
+    const cuisines = count('cuisine');
+    const list = filteredPlaces();
+    const controls = h('div', { class: 'controls' },
+      h('select', { 'aria-label': 'Show', onchange: (e) => { uiP.status = e.target.value; saveUiP(); render(); } }, PLACE_STATUS.map(([v, t]) => h('option', { value: v, selected: uiP.status === v }, t))),
+      h('select', { 'aria-label': 'Sort', onchange: (e) => { uiP.sort = e.target.value; saveUiP(); render(); } }, PLACE_SORT.map(([v, t]) => h('option', { value: v, selected: uiP.sort === v }, t))),
+      cities.length > 1 ? h('select', { 'aria-label': 'City', onchange: (e) => { uiP.city = e.target.value; saveUiP(); render(); } }, h('option', { value: '' }, 'Any city'), cities.map((c) => h('option', { value: c, selected: uiP.city === c }, c))) : null);
+    const cuisineBar = cuisines.length
+      ? h('div', { class: 'chips scroll' }, cuisines.map((c) => chip(c, { active: uiP.cuisine === c, onclick: () => { uiP.cuisine = uiP.cuisine === c ? '' : c; saveUiP(); render(); } })))
+      : null;
+    let body;
+    if (!store.restaurants.length) {
+      body = h('div', { class: 'empty' },
+        h('h2', null, 'No restaurants yet'),
+        h('p', null, 'Paste an Instagram or Facebook post about a place, or its website or Yelp link. Claude finds the website, socials, Yelp page, address and what to order.'),
+        h('div', { class: 'row center' }, h('a', { href: '#/addplace', class: 'btn primary' }, 'Add a restaurant'), h('a', { href: '#/bulk', class: 'btn' }, 'Bulk import')));
+    } else if (!list.length) {
+      body = h('div', { class: 'empty' }, h('p', null, 'No places match.'), h('button', { class: 'btn', type: 'button', onclick: () => { query = ''; searchEl.value = ''; Object.assign(uiP, { status: 'all', city: '', cuisine: '' }); saveUiP(); render(); } }, 'Clear filters'));
+    } else {
+      body = h('div', { class: 'grid' }, list.map(placeCard));
+    }
+    return h('section', null, controls, cuisineBar, h('p', { class: 'count' }, `${list.length} of ${store.restaurants.length} places`), body);
+  }
+
+  function placeCard(p) {
+    const avg = avgRating(p);
+    const visits = (p.visits || []).length;
+    const img = RB.safeUrl(p.imageUrl);
+    const fake = { title: p.name };
+    const have = LINKS.filter(([k]) => k !== 'googleMaps' && p.links?.[k]).map(([, t]) => t);
+    return h('a', { class: 'card', href: '#/p/' + encodeURIComponent(p.id) },
+      img ? h('img', { class: 'thumb', onerror: (e) => e.target.replaceWith(placeholder(fake)), alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', src: img }) : placeholder(fake),
+      h('div', { class: 'card-body' },
+        h('h3', null, p.favorite ? '♥ ' : '', p.name),
+        h('div', { class: 'meta small' }, placeLine(p)),
+        h('div', { class: 'meta' }, avg ? stars(avg) : null, visits ? h('span', { class: 'badge made' }, `Been ${visits}×`) : h('span', { class: 'badge' }, 'Want to go')),
+        have.length ? h('div', { class: 'meta small' }, have.slice(0, 4).join(' · ')) : null));
+  }
+
+  function viewPlace(id) {
+    const p = store.get(id, 'restaurants');
+    if (!p) return notFound();
+    setTitle(p.name);
+    const update = (fn, msg) => {
+      const copy = structuredClone(p);
+      fn(copy);
+      store.upsert(copy, msg || 'Update ' + copy.name, { coll: 'restaurants' }).catch((e) => toast(e.message, 'error'));
+      render();
+    };
+    const avg = avgRating(p);
+    const raters = Object.entries(p.ratings || {}).filter(([, v]) => v > 0);
+    const links = LINKS.map(([k, t]) => [t, k === 'googleMaps' ? mapsUrl(p) : p.links?.[k]]).filter(([, u]) => RB.safeUrl(u));
+    const missing = LINKS.filter(([k]) => !['googleMaps', 'tiktok', 'menu', 'reservations'].includes(k) && !p.links?.[k]).length;
+
+    const lookup = h('button', { class: 'btn small', type: 'button', onclick: async (e) => {
+      const b = e.currentTarget;
+      b.disabled = true;
+      b.textContent = 'Looking…';
+      try {
+        const res = await RB.claude.importAny({ text: `${p.name}${p.city ? ', ' + p.city : ''}${p.address ? ' (' + p.address + ')' : ''}`, want: 'restaurant', hint: 'Find this exact place and its official links.' });
+        const f = (res.restaurants || [])[0];
+        if (!f) throw new Error(res.message || 'Couldn’t find it.');
+        update((c) => {
+          // Only fill blanks; never overwrite what you typed.
+          for (const k of Object.keys(f.links)) if (!c.links[k] && f.links[k]) c.links[k] = f.links[k];
+          for (const k of ['address', 'neighborhood', 'city', 'phone', 'cuisine', 'priceRange', 'description']) if (!c[k] && f[k]) c[k] = f[k];
+          if (!c.mustTry.length) c.mustTry = f.mustTry;
+          if (!c.tags.length) c.tags = f.tags;
+        }, 'Look up ' + p.name);
+        toast('Filled in what it found.');
+      } catch (err) {
+        toast(err.message, 'error');
+        b.disabled = false;
+        b.textContent = 'Find links';
+      }
+    } }, 'Find links');
+
+    const visitForm = (() => {
+      const date = h('input', { type: 'date', value: today(), required: true });
+      const ordered = h('input', { type: 'text', placeholder: 'What we ordered' });
+      const notes = h('textarea', { rows: 2, placeholder: 'How was it? Get it again? Skip next time?' });
+      let rating = 0;
+      const starHost = h('span');
+      const drawStars = () => starHost.replaceChildren(stars(rating, (v) => { rating = v; drawStars(); }, 'Rating for this visit'));
+      drawStars();
+      return h('form', { class: 'made-form', onsubmit: (e) => {
+        e.preventDefault();
+        update((c) => {
+          c.visits = [...(c.visits || []), { id: RB.uid(), date: date.value, who: me(), rating, ordered: ordered.value.trim(), notes: notes.value.trim() }];
+          if (rating) c.ratings = { ...(c.ratings || {}), [me()]: rating };
+        }, 'Visited ' + p.name);
+        toast('Logged.');
+      } },
+        h('div', { class: 'row wrap' }, field('When', date), field('Rating', starHost)),
+        field('Ordered', ordered),
+        field('Notes', notes),
+        h('button', { class: 'btn primary', type: 'submit' }, 'We went'));
+    })();
+
+    const notesBox = (() => {
+      const ta = h('textarea', { rows: 3, value: p.notes || '', placeholder: 'Who recommended it, best night to go, parking, ask for the patio…' });
+      const btn = h('button', { class: 'btn', type: 'button', disabled: true, onclick: () => update((c) => (c.notes = ta.value), 'Notes on ' + p.name) }, 'Save notes');
+      ta.addEventListener('input', () => (btn.disabled = ta.value === (p.notes || '')));
+      return h('div', { class: 'notes' }, ta, btn);
+    })();
+
+    const visits = (p.visits || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    return h('article', { class: 'recipe' },
+      h('a', { href: '#/places', class: 'back' }, '← All restaurants'),
+      h('div', { class: 'recipe-head' },
+        RB.safeUrl(p.imageUrl) ? h('img', { class: 'hero', onerror: (e) => e.target.remove(), alt: '', referrerpolicy: 'no-referrer', src: p.imageUrl }) : null,
+        h('div', null,
+          h('h1', null, p.name),
+          placeLine(p) ? h('p', { class: 'desc' }, placeLine(p)) : null,
+          p.description ? h('p', null, p.description) : null,
+          p.address ? h('p', { class: 'source' }, h('a', { href: mapsUrl(p), target: '_blank', rel: 'noopener noreferrer' }, p.address)) : null,
+          p.phone ? h('p', { class: 'source' }, h('a', { href: 'tel:' + p.phone.replace(/[^\d+]/g, '') }, p.phone)) : null,
+          h('div', { class: 'chips' }, (p.tags || []).map((t) => chip('#' + t, { kind: 'tag', onclick: () => { query = t; searchEl.value = t; location.hash = '#/places'; } }))),
+          h('div', { class: 'rating-row' },
+            h('span', { class: 'label' }, `${me()}'s rating`),
+            stars(p.ratings?.[me()] || 0, (v) => update((c) => { c.ratings = { ...(c.ratings || {}), [me()]: v }; }, 'Rate ' + p.name), 'Your rating'),
+            raters.length > 1 || (raters.length === 1 && raters[0][0] !== me()) ? h('span', { class: 'muted' }, ' ', raters.map(([k, v]) => `${k} ${v}★`).join(' · '), ` (avg ${avg.toFixed(1)})`) : null),
+          h('div', { class: 'row wrap' },
+            h('span', { class: 'badge ' + (visits.length ? 'made' : '') }, visits.length ? `Been ${visits.length}×` : 'Want to go'),
+            h('button', { class: 'btn' + (p.favorite ? ' active' : ''), type: 'button', onclick: () => update((c) => (c.favorite = !c.favorite)) }, p.favorite ? '♥ Favorite' : '♡ Favorite'),
+            h('a', { class: 'btn', href: '#/pedit/' + encodeURIComponent(p.id) }, 'Edit')))),
+      h('section', null,
+        h('h2', null, 'Links'),
+        h('div', { class: 'row wrap links' }, links.map(([t, u]) => h('a', { class: 'btn small', href: u, target: '_blank', rel: 'noopener noreferrer' }, t)), missing && settings.load().claudeKey ? lookup : null)),
+      p.mustTry?.length ? h('section', null, h('h2', null, 'Must try'), h('ul', { class: 'ingredients' }, p.mustTry.map((d) => h('li', null, d)))) : null,
+      h('section', null, h('h2', null, 'Our notes'), notesBox),
+      h('section', null,
+        h('h2', null, 'Visits', visits.length ? h('span', { class: 'muted' }, ` (${visits.length})`) : null),
+        visits.length
+          ? h('ul', { class: 'made-log' }, visits.map((v) => h('li', null,
+              h('div', null, h('strong', null, fmtDate(v.date)), v.who ? h('span', { class: 'muted' }, ` · ${v.who}`) : null, v.rating ? h('span', null, ' ', stars(v.rating)) : null,
+                h('button', { class: 'link danger', type: 'button', 'aria-label': 'Remove this visit', onclick: () => { if (confirm('Remove this visit?')) update((c) => (c.visits = c.visits.filter((x) => x.id !== v.id))); } }, '×')),
+              v.ordered ? h('p', null, 'Ordered: ', v.ordered) : null,
+              v.notes ? h('p', null, v.notes) : null)))
+          : h('p', { class: 'muted' }, 'Not yet.'),
+        visitForm),
+      h('p', { class: 'muted small' },
+        p.source?.postUrl ? h('span', null, h('a', { href: p.source.postUrl, target: '_blank', rel: 'noopener noreferrer' }, 'Original post'), ' · ') : null,
+        p.addedBy ? `Added by ${p.addedBy}` : ''),
+      p.originalText ? h('details', { class: 'original' }, h('summary', null, 'Original post / text'), h('pre', null, p.originalText)) : null,
+      h('div', { class: 'row danger-zone' },
+        h('button', { class: 'btn danger', type: 'button', onclick: async () => { if (!confirm(`Delete "${p.name}"?`)) return; await store.remove(p.id, 'restaurants').catch((e) => toast(e.message, 'error')); location.hash = '#/places'; } }, 'Delete restaurant')));
+  }
+
+  function viewPlaceEdit(id, draft) {
+    const original = id ? store.get(id, 'restaurants') : null;
+    if (id && !original) return notFound();
+    const p = structuredClone(draft || original || RB.newRestaurant({ addedBy: me() }));
+    setTitle(id ? 'Edit ' + p.name : 'New restaurant');
+    const inp = (v, ph, type) => h('input', { type: type || 'text', value: v || '', placeholder: ph || '' });
+    const f = {
+      name: inp(p.name),
+      cuisine: inp(p.cuisine, 'Thai, BBQ, Bakery…'),
+      priceRange: h('select', null, ['', '$', '$$', '$$$', '$$$$'].map((v) => h('option', { value: v, selected: p.priceRange === v }, v || '—'))),
+      city: inp(p.city, 'Cleveland, OH'),
+      neighborhood: inp(p.neighborhood, 'Ohio City'),
+      address: inp(p.address),
+      phone: inp(p.phone, '', 'tel'),
+      description: h('textarea', { rows: 2, value: p.description }),
+      mustTry: h('textarea', { rows: 3, value: (p.mustTry || []).join('\n'), placeholder: 'One per line' }),
+      tags: inp((p.tags || []).join(', '), 'date night, patio, brunch'),
+      imageUrl: inp(p.imageUrl, '', 'url'),
+      notes: h('textarea', { rows: 3, value: p.notes }),
+    };
+    const lf = Object.fromEntries(LINKS.map(([k]) => [k, inp(p.links?.[k], '', 'url')]));
+    const cityList = h('datalist', { id: 'city-list' }, [...new Set(store.restaurants.map((x) => x.city).filter(Boolean))].map((c) => h('option', { value: c })));
+    f.city.setAttribute('list', 'city-list');
+    const form = h('form', { class: 'edit', onsubmit: async (e) => {
+      e.preventDefault();
+      const out = {
+        ...stripKind(p),
+        name: f.name.value.trim() || 'Unnamed place',
+        cuisine: f.cuisine.value.trim(),
+        priceRange: f.priceRange.value,
+        city: f.city.value.trim(),
+        neighborhood: f.neighborhood.value.trim(),
+        address: f.address.value.trim(),
+        phone: f.phone.value.trim(),
+        description: f.description.value.trim(),
+        mustTry: f.mustTry.value.split('\n').map((x) => x.trim()).filter(Boolean),
+        tags: f.tags.value.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean),
+        imageUrl: f.imageUrl.value.trim(),
+        notes: f.notes.value,
+        links: Object.fromEntries(LINKS.map(([k]) => [k, lf[k].value.trim()])),
+      };
+      try {
+        const pr = store.upsert(out, (id ? 'Edit ' : 'Add ') + out.name, { coll: 'restaurants' });
+        if (draft) pendingImport = (pendingImport || []).filter((x) => x.id !== draft.id);
+        location.hash = '#/p/' + encodeURIComponent(out.id);
+        await pr;
+        toast('Saved.');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    } },
+      field('Name', f.name),
+      h('div', { class: 'row wrap' }, field('Cuisine', f.cuisine), field('Price', f.priceRange)),
+      h('div', { class: 'row wrap' }, field('City', f.city), field('Neighborhood', f.neighborhood)), cityList,
+      h('div', { class: 'row wrap' }, field('Address', f.address), field('Phone', f.phone)),
+      field('Description', f.description),
+      h('h2', null, 'Links'),
+      h('div', { class: 'row wrap' }, LINKS.map(([k, t]) => field(t, lf[k]))),
+      field('Must try', f.mustTry),
+      field('Tags', f.tags, 'Comma separated'),
+      field('Photo URL', f.imageUrl),
+      field('Our notes', f.notes),
+      h('div', { class: 'row sticky-actions' },
+        h('button', { class: 'btn primary', type: 'submit' }, draft ? 'Save restaurant' : 'Save'),
+        h('a', { class: 'btn', href: id ? '#/p/' + encodeURIComponent(id) : draft ? '#/add' : '#/places', onclick: () => { if (draft && pendingImport && pendingImport.length === 1) pendingImport = null; } }, draft ? 'Discard' : 'Cancel')));
+    return h('section', { class: 'narrow' }, h('h1', null, id ? 'Edit restaurant' : draft ? 'Check it over' : 'New restaurant'), form);
   }
 
   function viewCook(id) {
@@ -513,6 +831,22 @@
     const status = h('p', { class: 'muted', 'aria-live': 'polite' });
     const listHost = h('div');
     const filter = h('input', { type: 'search', placeholder: 'Filter this list…' });
+    const pasteTa = h('textarea', { rows: 5, class: 'mono', placeholder: 'Paste the list from the browser collection run (JSON), or posts separated by blank lines…' });
+    const pasteBtn = h('button', { class: 'btn', type: 'button', onclick: () => {
+      const items = RB.bulk.finalize(RB.bulk.listCandidates(pasteTa.value));
+      cands = cands.concat(items);
+      status.textContent = `Added ${items.length} items from the pasted list.`;
+      pasteTa.value = '';
+      drawList();
+    } }, 'Add to list');
+    const pasteFile = h('input', { type: 'file', accept: '.json,.txt,.md', onchange: async (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const items = RB.bulk.finalize(RB.bulk.listCandidates(await f.text()));
+      cands = cands.concat(items);
+      status.textContent = `Added ${items.length} items from ${f.name}.`;
+      drawList();
+    } });
     let runner = null;
 
     input.addEventListener('change', async () => {
@@ -535,7 +869,9 @@
           h('label', null, cb,
             h('span', { class: 'cand-body' },
               h('strong', null, c.title),
-              h('span', { class: 'muted small' }, ' ', [SOURCE_LABEL[c.sourceType] || c.sourceType, c.date, c.existing ? 'already saved' : ''].filter(Boolean).join(' · ')),
+              h('span', { class: 'muted small' }, ' ', [SOURCE_LABEL[c.sourceType] || c.sourceType, c.date, c.existing ? 'already saved' : ''].filter(Boolean).join(' · '),
+                h('select', { 'aria-label': 'Import as', onclick: (e) => e.stopPropagation(), onchange: (e) => { c.want = e.target.value; } },
+                  [['auto', 'Figure it out'], ['recipe', 'Recipe'], ['restaurant', 'Restaurant']].map(([v, t]) => h('option', { value: v, selected: (c.want || 'auto') === v }, t)))),
               c.text ? h('span', { class: 'snippet' }, c.text.slice(0, 180)) : null,
               c.url ? h('span', { class: 'snippet url' }, c.url) : null,
               c.info ? h('span', { class: 'cand-info' }, c.info) : null)));
@@ -579,7 +915,7 @@
         },
         onDone(sum, stopped) {
           runner = null;
-          status.textContent = `${stopped ? 'Stopped. ' : 'Done. '}Added ${sum.added} recipes, ${sum.stubs} need the recipe filled in, ${sum.skipped} already saved, ${sum.failed} failed.`;
+          status.textContent = `${stopped ? 'Stopped. ' : 'Done. '}Added ${sum.added} recipes and ${sum.places} restaurants. ${sum.stubs} need the recipe filled in, ${sum.neither} weren’t either, ${sum.skipped} already saved, ${sum.failed} failed.`;
           drawList();
         },
       });
@@ -589,7 +925,7 @@
     const help = (title, ...body) => h('details', { class: 'help' }, h('summary', null, title), ...body);
     return h('section', { class: 'narrow' },
       h('h1', null, 'Bulk import'),
-      h('p', null, 'Drop in your exports. Nothing is imported until you pick which items to run.'),
+      h('p', null, 'Bring in recipes and restaurants in bulk. Nothing is imported until you pick which items to run. Each item can be set to Recipe, Restaurant, or Figure it out.'),
       help('Facebook: saved posts and your posts',
         h('ol', null,
           h('li', null, 'Facebook → Settings & privacy → Settings → Accounts Center → Your information and permissions → Download your information.'),
@@ -614,6 +950,12 @@
           h('li', null, 'In Gmail, search for your recipe emails and apply a label like “Recipes”.'),
           h('li', null, 'takeout.google.com → Deselect all → Mail → “All Mail data included” → only the Recipes label.'),
           h('li', null, 'Select the .zip (or the .mbox inside it) here.'))),
+      h('details', { class: 'help', open: true },
+        h('summary', null, 'Paste a list from a browser run'),
+        h('p', { class: 'muted small' }, 'If Claude collected your saved posts with its browser (see browser-collect-prompt.md in the repo), choose that file or paste its contents here.'),
+        field('List file', pasteFile),
+        pasteTa,
+        h('div', { class: 'row' }, pasteBtn)),
       field('Export files', input, '.zip, .json, .docx, .txt, .html, .mbox'),
       status,
       listHost);
@@ -715,8 +1057,8 @@
           if (!file) return;
           try {
             const data = JSON.parse(await file.text());
-            if (!Array.isArray(data.recipes)) throw new Error('That file isn’t a recipe box backup.');
-            if (!confirm(`Merge ${data.recipes.length} recipes from the backup into your box?`)) return;
+            if (!Array.isArray(data.recipes) && !Array.isArray(data.restaurants)) throw new Error('That file isn’t a recipe box backup.');
+            if (!confirm(`Merge ${(data.recipes || []).length} recipes and ${(data.restaurants || []).length} restaurants from the backup?`)) return;
             store.data = RB.merge(store.data, data);
             store.dirty = true;
             await store.save('Restore from backup');
@@ -754,7 +1096,11 @@
       case 'r': view = viewRecipe(id); break;
       case 'edit': view = viewEdit(id); break;
       case 'new': view = viewEdit(null); break;
-      case 'add': view = viewAdd(); break;
+      case 'add': case 'addplace': view = viewAdd(); break;
+      case 'places': view = viewPlaces(); break;
+      case 'p': view = viewPlace(id); break;
+      case 'pedit': view = viewPlaceEdit(id); break;
+      case 'pnew': view = viewPlaceEdit(null); break;
       case 'review': view = viewReviewOne(id); break;
       case 'cook': view = viewCook(id); break;
       case 'bulk': view = viewBulk(); break;
@@ -762,6 +1108,11 @@
       default: view = notFound();
     }
     document.body.dataset.route = route || 'home';
+    const inPlaces = ['places', 'p', 'pedit', 'pnew', 'addplace'].includes(route);
+    document.getElementById('tab-recipes').classList.toggle('on', !inPlaces && ['', 'r', 'edit', 'new', 'cook'].includes(route || ''));
+    document.getElementById('tab-places').classList.toggle('on', inPlaces);
+    document.querySelector('.top-actions .btn.primary').setAttribute('href', inPlaces ? '#/addplace' : '#/add');
+    searchEl.placeholder = inPlaces ? 'Search restaurants, cities, dishes…' : 'Search recipes, ingredients, notes…';
     app.replaceChildren(view);
   }
 
@@ -772,7 +1123,10 @@
 
   searchEl.addEventListener('input', RB.debounce(() => {
     query = searchEl.value;
-    if ((location.hash || '#/') !== '#/') location.hash = '#/';
+    const r = document.body.dataset.route;
+    if (!query.trim() && !['home', 'places'].includes(r)) return; // clearing the box shouldn't navigate
+    const target = ['places', 'p', 'pedit', 'pnew', 'addplace'].includes(r) ? '#/places' : '#/';
+    if ((location.hash || '#/') !== target) location.hash = target;
     else render();
   }, 120));
 
@@ -781,7 +1135,7 @@
     drawSync();
     const route = document.body.dataset.route;
     const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && document.activeElement !== searchEl;
-    if ((route === 'home' || route === 'r') && !typing) render();
+    if (['home', 'r', 'places', 'p'].includes(route) && !typing) render();
   });
 
   function drawSync() {

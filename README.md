@@ -1,6 +1,9 @@
 # Recipe Box
 
-A private recipe box for two. Paste a recipe link or a Facebook/Instagram post and it pulls out just the recipe: no life story, no ads, no "comment SOUP and I'll DM you". You can search, sort into categories, rate, log when and where you made something, and keep your own notes and edits.
+A private recipe box and restaurant list for two.
+
+- **Recipes:** paste a recipe link or a Facebook/Instagram post and it pulls out just the recipe: no life story, no ads, no "comment SOUP and I'll DM you". Search, sort into categories, rate, log when and where you made it, and keep your own notes and edits.
+- **Restaurants:** paste a post about a place and it finds the website, Instagram, Facebook, Yelp, menu and reservation links, address, price and what to order. Track want-to-go vs. been, log visits and what you ordered, rate, filter by city, and keep notes.
 
 - **The app** is a static site (plain HTML/JS, no build step) hosted free on GitHub Pages.
 - **Your recipes** live in one `recipes.json` file in a **private** GitHub repo. Every change is a commit, so you get full history and can undo.
@@ -87,7 +90,12 @@ To install it like an app on a phone: Safari → Share → **Add to Home Screen*
   - **Edit:** change anything.
 - **Cook mode:** big text, check off ingredients, tap a step to mark your place. The screen stays on.
 - **Needs recipe:** posts where the importer couldn't find the actual recipe. Open the original post, copy the caption or recipe link, paste it into the box on the recipe page, and it fills in.
-- **Settings → Download backup:** the whole box as one JSON file.
+- **Restaurants tab:**
+  - Filter by Want to go / We've been / Favorites, city and cuisine. Search covers dishes, tags and notes.
+  - Each place page has buttons for its links (Google Maps is always there), plus must-try dishes, notes, ratings, and a **We went** log with what you ordered.
+  - **Find links** fills in whatever links are missing.
+- **+ Add** works for both. Choose Recipe, Restaurant, or **Figure it out** and it sorts the item into the right section. A post listing several places becomes one entry per place.
+- **Settings → Download backup:** everything as one JSON file.
 
 ### Both editing at once
 
@@ -95,7 +103,11 @@ Saves are per-recipe. If you both save at the same moment, the app pulls the oth
 
 ---
 
-## The first big import
+## Pulling in your saved posts with Claude's browser
+
+**`BROWSER_PROMPT.txt`** is a ready-to-paste prompt. Paste it into Claude in Chrome (or a Cowork task with a browser) while you're logged in to Facebook and Instagram. It walks your saved collections, read-only, and gives you a list of captions and links. Paste that list into **Bulk import → Paste a list from a browser run**. See [`browser-collect-prompt.md`](browser-collect-prompt.md) for details.
+
+## The first big import from exports
 
 In the app, open **Bulk import**. It lists everything it found in your exports, pre-checks the ones that look like recipes, and imports only what you approve. The steps below are also shown in the app.
 
@@ -145,7 +157,7 @@ To set it up, follow the comments in [`worker/cors-proxy.js`](worker/cors-proxy.
 `recipes.json`:
 
 ```json
-{ "version": 1, "updatedAt": "…", "recipes": [ {
+{ "version": 1, "updatedAt": "…", "restaurants": [ /* see newRestaurant() in js/store.js */ ], "recipes": [ {
   "id": "…", "title": "…", "description": "", "imageUrl": "",
   "source": { "type": "web|facebook|instagram|gdoc|email|manual", "url": "", "name": "", "author": "", "postUrl": "" },
   "yield": "", "prepTime": "", "cookTime": "", "totalTime": "",
@@ -157,7 +169,7 @@ To set it up, follow the comments in [`worker/cors-proxy.js`](worker/cors-proxy.
 } ] }
 ```
 
-Deleted recipes stay in the file as `{ "id", "deleted": true }` markers so the merge doesn't bring them back.
+Deleted items stay in the file as `{ "id", "deleted": true }` markers so the merge doesn't bring them back.
 
 ## Development
 

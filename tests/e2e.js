@@ -56,7 +56,15 @@ function claudeRoute(route) {
   assert.equal(h['x-api-key'], 'sk-ant-test');
   const prompt = typeof body.messages[0].content === 'string' ? body.messages[0].content : '';
   let out;
+  const wantsPlaces = body.system.includes('RESTAURANTS (');
+  const wantsRecipes = body.system.includes('RECIPES\n');
   if (body.system.startsWith('Classify')) out = { categories: ['Dinner'], tags: ['pasta', 'quick'] };
+  else if (wantsPlaces && /birria|taco/i.test(prompt)) out = { status: 'found', message: 'Found 2 places.', recipes: [], restaurants: [
+    { name: 'Birria Boss', cuisine: 'Mexican', priceRange: '$', city: 'Cleveland, OH', neighborhood: 'Clark-Fulton', address: '123 Fake St, Cleveland, OH', phone: '(216) 555-0100', links: { website: 'https://birriaboss.example', instagram: 'https://instagram.com/birriaboss', yelp: 'https://www.yelp.com/biz/birria-boss-cleveland', facebook: '' }, mustTry: ['Quesabirria tacos', 'Consomé'], tags: ['tacos', 'casual'] },
+    { name: 'Taco Tuesday Truck', cuisine: 'Mexican', city: 'Cleveland, OH', links: {}, mustTry: [], tags: ['food truck'] }] };
+  else if (wantsPlaces && /Smash burger/i.test(prompt)) out = { status: 'found', message: '', recipes: [], restaurants: [{ name: 'Example Diner', cuisine: 'Burgers', city: 'Columbus, OH', links: { instagram: 'https://instagram.com/examplediner' }, mustTry: ['Double smash'], tags: ['burgers'] }] };
+  else if (wantsPlaces && /Lake Erie Lookup/i.test(prompt)) out = { status: 'found', message: '', recipes: [], restaurants: [{ name: 'Lake Erie Lookup', city: 'Sandusky, OH', links: { website: 'https://lakeerie.example', yelp: 'https://yelp.com/biz/lel', facebook: 'https://facebook.com/lel' }, address: '1 Shore Dr', mustTry: ['Perch sandwich'], tags: ['waterfront'] }] };
+  else if (!wantsRecipes && wantsPlaces && !/birria|taco|burger|Lake Erie/i.test(prompt)) out = { status: 'neither', message: 'Not a food place.', recipes: [], restaurants: [] };
   else if (/tuscan/i.test(prompt)) {
     if (!pausedOnce) {
       pausedOnce = true;
@@ -95,7 +103,7 @@ function proxyRoute(route) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   await setup(ctx);
   const page = await ctx.newPage();
-  page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+  page.on('pageerror', (e) => { console.log('PAGEERROR', e.message, e.stack); errors.push('pageerror: ' + e.message); });
   page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|ERR_FAILED|net::/.test(m.text())) errors.push('console: ' + m.text()); });
   page.on('dialog', (d) => d.accept());
 
@@ -227,7 +235,7 @@ function proxyRoute(route) {
 
   // 9. bulk import
   await page.goto(BASE + '#/bulk');
-  await page.setInputFiles('input[type=file]', [T + 'facebook-export.zip', T + 'takeout.zip']);
+  await page.setInputFiles('input[type=file][multiple]', [T + 'facebook-export.zip', T + 'takeout.zip']);
   await page.waitForSelector('text=possible recipes');
   const candTitles = await page.$$eval('.cand strong', (els) => els.map((e) => e.textContent));
   console.log('  candidates:', candTitles);
@@ -272,6 +280,88 @@ function proxyRoute(route) {
   assert.ok(finished.source.postUrl.includes('ABC123'), 'kept original post link');
   console.log('✓ finish a needs-recipe stub');
 
+  // 11. restaurants: add from a post (auto-detect), multiple places -> review list
+  await page.goto(BASE + '#/add');
+  await page.click('.seg button:has-text("Figure it out")');
+  await page.fill('textarea', 'Best birria tacos in Cleveland 🌮 @birriaboss and the Taco Tuesday Truck!');
+  await page.click('button:has-text("Import")');
+  await page.waitForSelector('h1:has-text("Found 2 restaurants")');
+  await page.click('button:has-text("Save all")');
+  await page.waitForURL(/#\/places/);
+  await page.waitForFunction(() => document.querySelectorAll('.card').length === 2);
+  assert.ok(await page.$('#tab-places.on'), 'Restaurants tab active');
+  await page.click('.card:has-text("Birria Boss")');
+  await page.waitForSelector('a.btn:has-text("Yelp")');
+  assert.ok(await page.$('a.btn:has-text("Google Maps")'));
+  assert.ok(await page.$('a[href^="tel:"]'), 'phone link');
+  await page.waitForSelector('li:has-text("Quesabirria")');
+  await page.click('.rating-row .star >> nth=4');
+  await page.fill('.made-form input[placeholder="What we ordered"]', 'Quesabirria x3');
+  await page.click('button:has-text("We went")');
+  await page.waitForSelector('.made-log li:has-text("Quesabirria x3")');
+  await page.waitForSelector('.badge:has-text("Been 1×")');
+  await page.screenshot({ path: OUT + 'place.png', fullPage: true });
+  // edit
+  await page.click('a:has-text("Edit")');
+  await page.fill('input[placeholder="date night, patio, brunch"]', 'tacos, casual, kid friendly');
+  await page.click('button:has-text("Save")');
+  await page.waitForSelector('.chip:has-text("#kid friendly")');
+  // find links on the bare truck entry
+  await page.goto(BASE + '#/places');
+  await page.click('.card:has-text("Taco Tuesday Truck")');
+  await page.click('button:has-text("Find links")');
+  await page.waitForSelector('text=Filled in what it found');
+  await page.waitForFunction(() => document.getElementById('sync').textContent === '');
+  data = JSON.parse(gh.content);
+  assert.equal(data.restaurants.filter((r) => !r.deleted).length, 2);
+  const boss = data.restaurants.find((r) => r.name === 'Birria Boss');
+  assert.equal(boss.visits[0].ordered, 'Quesabirria x3');
+  assert.equal(boss.ratings.Mando, 5);
+  assert.ok(boss.tags.includes('kid friendly'));
+  assert.ok(data.recipes.length > 3, 'recipes untouched');
+  // filters & search in places
+  await page.goto(BASE + '#/places');
+  await page.selectOption('select[aria-label=Show]', 'been');
+  await page.waitForFunction(() => document.querySelectorAll('.card').length === 1);
+  await page.selectOption('select[aria-label=Show]', 'all');
+  await page.fill('#search', 'kid friendly');
+  await page.waitForFunction(() => document.querySelectorAll('.card').length === 1 && location.hash === '#/places');
+  await page.fill('#search', '');
+  await page.screenshot({ path: OUT + 'places.png' });
+  console.log('✓ restaurants: import, links, visits, edit, find links, filters');
+
+  // 12. pasted list from a browser run (mixed types, location tag, existing skip)
+  const pasted = 'Here is batch 1:\n```json\n' + JSON.stringify([
+    { url: 'https://www.instagram.com/p/SMASH1/', platform: 'instagram', collection: 'All posts', type: 'restaurant', author: 'colsfood', title: 'Smash burgers', caption: 'Smash burger heaven [ok] "quoted"', location: 'Example Diner, Columbus' },
+    { url: 'https://www.instagram.com/p/MEME/', platform: 'instagram', collection: 'All posts', type: 'unsure', author: 'memes', caption: 'lol cats' },
+  ]) + '\n```\nBatch 2:\n' + JSON.stringify([
+    { url: 'https://www.facebook.com/x/posts/9', platform: 'facebook', collection: 'restaurants', author: 'LEL', caption: 'Lake Erie Lookup has the best perch', links: [] },
+    { url: 'https://www.facebook.com/somecreator/posts/12345', platform: 'facebook', collection: 'recipes', caption: 'already imported one' },
+  ]);
+  await page.goto(BASE + '#/bulk');
+  await page.fill('details.help textarea', pasted);
+  await page.click('button:has-text("Add to list")');
+  await page.waitForSelector('text=Added 4 items from the pasted list');
+  const types = await page.$$eval('.cand select', (els) => els.map((e) => e.value));
+  console.log('  pasted types:', types);
+  assert.ok(types.includes('restaurant') && types.includes('auto'));
+  const existingCount = await page.$$eval('.cand input[type=checkbox]:disabled', (els) => els.length);
+  assert.equal(existingCount, 1, 'already-imported post is disabled');
+  await page.click('button:has-text("Select shown")');
+  await page.click('button:has-text("Import")');
+  await page.waitForSelector('text=/Done\\. Added/', { timeout: 30000 });
+  const sumText = await page.$eval('section [aria-live=polite]', (e) => e.textContent);
+  console.log('  ' + sumText);
+  assert.ok(/2 restaurants/.test(sumText), sumText);
+  await page.waitForFunction(() => document.getElementById('sync').textContent === '');
+  data = JSON.parse(gh.content);
+  const diner = data.restaurants.find((r) => r.name === 'Example Diner');
+  assert.ok(diner && diner.source.postUrl.includes('SMASH1'));
+  const smashCall = claudeCalls.find((c) => /SMASH1/.test(c.body.messages[0].content));
+  assert.ok(smashCall.body.messages[0].content.includes('Location tag: Example Diner, Columbus'));
+  assert.ok(!smashCall.body.system.includes('RECIPES\n'), 'restaurant-only prompt');
+  console.log('✓ pasted list import (mixed recipe/restaurant)');
+
   // screenshots
   await page.goto(BASE + '#/');
   await page.selectOption('select[aria-label=Show]', 'all');
@@ -294,6 +384,10 @@ function proxyRoute(route) {
   await mp.screenshot({ path: OUT + 'mobile-library.png' });
   await mp.click('.card:has-text("(ours)")');
   await mp.screenshot({ path: OUT + 'mobile-recipe.png' });
+  await mp.goto(BASE + '#/places');
+  await mp.waitForSelector('.card');
+  assert.ok(!(await mp.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)), 'no horizontal scroll on places');
+  await mp.screenshot({ path: OUT + 'mobile-places.png' });
   console.log('✓ mobile layout');
 
   // local-only mode

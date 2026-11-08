@@ -1,3 +1,5 @@
 tests/out/
 .DS_Store
 node_modules/
+# Lists collected from your accounts. Keep them out of this public repo.
+imports/
