@@ -57,15 +57,23 @@
       }
       return res.status === 204 ? null : res.json();
     }
-    contentsUrl() {
-      const p = this.path.split('/').map(encodeURIComponent).join('/');
+    contentsUrl(path = this.path) {
+      const p = path.split('/').map(encodeURIComponent).join('/');
       return `/repos/${this.repo}/contents/${p}` + (this.branch ? `?ref=${encodeURIComponent(this.branch)}` : '');
+    }
+    /** Returns {text, sha} of any file in the data repo. */
+    async readText(path) {
+      const meta = await this.req('GET', this.contentsUrl(path));
+      if (meta.content && meta.encoding === 'base64') return { text: b64ToText(meta.content), sha: meta.sha };
+      // Files over 1 MB come back without content; fetch the blob instead.
+      const blob = await this.req('GET', `/repos/${this.repo}/git/blobs/${meta.sha}`);
+      return { text: b64ToText(blob.content), sha: meta.sha };
     }
     /** Returns {data, sha}; data is null when the file doesn't exist yet. */
     async load() {
-      let meta;
+      let file;
       try {
-        meta = await this.req('GET', this.contentsUrl());
+        file = await this.readText(this.path);
       } catch (e) {
         if (e.status === 404) {
           // Distinguish "no file yet" from "no access to repo".
@@ -74,15 +82,7 @@
         }
         throw e;
       }
-      let text;
-      if (meta.content && meta.encoding === 'base64') {
-        text = b64ToText(meta.content);
-      } else {
-        // Files over 1 MB come back without content; fetch the blob instead.
-        const blob = await this.req('GET', `/repos/${this.repo}/git/blobs/${meta.sha}`);
-        text = b64ToText(blob.content);
-      }
-      return { data: JSON.parse(text), sha: meta.sha };
+      return { data: JSON.parse(file.text), sha: file.sha };
     }
     /** Returns new sha. Throws HttpError 409/422 when someone else saved first. */
     async save(data, sha, message) {

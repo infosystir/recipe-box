@@ -18,6 +18,9 @@ function ghRoute(route) {
   const json = (status, obj) => route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(obj) });
   if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
   if (url.pathname === '/repos/infosystir/recipe-box-data') return json(200, { full_name: 'infosystir/recipe-box-data', private: true, permissions: { push: true } });
+  if (url.pathname === '/repos/infosystir/recipe-box-data/contents/imports/saved-posts.json') {
+    return json(200, { sha: 'imp1', content: b64(JSON.stringify([{ url: 'https://www.instagram.com/p/FROMREPO/', platform: 'instagram', collection: 'All posts', type: 'recipe', author: 'repo_cook', caption: 'Repo loaded chili with beans and cumin' }])), encoding: 'base64' });
+  }
   if (url.pathname === '/repos/infosystir/recipe-box-data/contents/recipes.json') {
     if (req.method() === 'GET') {
       if (!gh.content) return json(404, { message: 'Not Found' });
@@ -338,6 +341,12 @@ function proxyRoute(route) {
     { url: 'https://www.facebook.com/x/posts/9', platform: 'facebook', collection: 'restaurants', author: 'LEL', caption: 'Lake Erie Lookup has the best perch', links: [] },
     { url: 'https://www.facebook.com/somecreator/posts/12345', platform: 'facebook', collection: 'recipes', caption: 'already imported one' },
   ]);
+  await page.goto(BASE + '#/bulk');
+  await page.click('button:has-text("Load saved posts from the data repo")');
+  await page.waitForSelector('text=Added 1 items from imports/saved-posts.json');
+  assert.ok(await page.$('text=Repo loaded chili'), 'repo list shows up');
+  console.log('✓ load saved posts from data repo');
+  await page.goto(BASE + '#/');
   await page.goto(BASE + '#/bulk');
   await page.fill('details.help textarea', pasted);
   await page.click('button:has-text("Add to list")');

@@ -847,6 +847,19 @@
       status.textContent = `Added ${items.length} items from ${f.name}.`;
       drawList();
     } });
+    const SAVED_POSTS = 'imports/saved-posts.json';
+    const repoBtn = s.mode === 'github' ? h('button', { class: 'btn', type: 'button', onclick: async () => {
+      status.textContent = `Loading ${SAVED_POSTS} from ${s.ghRepo}…`;
+      try {
+        const { text } = await store.backend.readText(SAVED_POSTS);
+        const items = RB.bulk.finalize(RB.bulk.listCandidates(text));
+        cands = cands.concat(items);
+        status.textContent = `Added ${items.length} items from ${SAVED_POSTS}.`;
+        drawList();
+      } catch (e) {
+        status.textContent = e.status === 404 ? `No ${SAVED_POSTS} in ${s.ghRepo} yet.` : 'Couldn’t load it: ' + e.message;
+      }
+    } }, 'Load saved posts from the data repo') : null;
     let runner = null;
 
     input.addEventListener('change', async () => {
@@ -952,7 +965,8 @@
           h('li', null, 'Select the .zip (or the .mbox inside it) here.'))),
       h('details', { class: 'help', open: true },
         h('summary', null, 'Paste a list from a browser run'),
-        h('p', { class: 'muted small' }, 'If Claude collected your saved posts with its browser (see browser-collect-prompt.md in the repo), choose that file or paste its contents here.'),
+        h('p', { class: 'muted small' }, 'If Claude collected your saved posts with its browser (see browser-collect-prompt.md in the repo), load them from imports/saved-posts.json in your data repo, choose the file, or paste its contents here.'),
+        repoBtn ? h('div', { class: 'row' }, repoBtn) : null,
         field('List file', pasteFile),
         pasteTa,
         h('div', { class: 'row' }, pasteBtn)),
