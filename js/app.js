@@ -1025,7 +1025,7 @@
       field('Storage', f.mode),
       gh,
       h('h2', null, 'Importing'),
-      field('Claude API key', f.claudeKey, 'From console.anthropic.com. Set a monthly spend limit there. Stored only in this browser.'),
+      field('Claude API key (optional)', f.claudeKey, 'Only needed to pull recipes and places from links and posts. Without it you can still browse, search, add by hand, rate and log. From console.anthropic.com; set a monthly spend limit there. Stored only in this browser.'),
       h('div', { class: 'row' }, field('Model', f.claudeModel), h('button', { class: 'btn small', type: 'button', onclick: async () => {
         try {
           const models = await RB.claude.listModels(f.claudeKey.value.trim());
@@ -1071,7 +1071,7 @@
       })());
 
     return h('section', { class: 'narrow' }, h('h1', null, 'Settings'),
-      !settings.isConfigured ? h('div', { class: 'callout' }, h('strong', null, 'Welcome! '), 'Set your name and where recipes live. The README in the repo walks through creating the private data repo and tokens.') : null,
+      !settings.isConfigured ? h('div', { class: 'callout' }, h('strong', null, 'Welcome! '), 'Set your name and where recipes live. The Claude key is optional. The README in the repo walks through creating the private data repo and tokens.') : null,
       form,
       h('h2', null, 'Backup'), backup,
       h('p', { class: 'muted small' }, 'Tokens and keys stay in this browser’s storage and are only sent to api.github.com and api.anthropic.com.'));
@@ -1088,6 +1088,8 @@
     const id = decodeURIComponent(arg || '');
     let view;
     if (!settings.isConfigured && route !== 'settings') {
+      // Without this, tab clicks bounce back here silently and look broken.
+      if (document.body.dataset.route) toast('Finish Settings first: add your data repo and GitHub token, then Save & connect.');
       location.hash = '#/settings';
       return;
     }

@@ -54,7 +54,9 @@ Go to **GitHub → Settings → Developer settings → Personal access tokens �
 
 **For your husband:** generate a second token the same way, named for his phone. He can only touch the recipe repo, and you can revoke his token without affecting yours. (If he'd rather use his own GitHub account, add him as a collaborator on `recipe-box-data` and have him create a *classic* token with `repo` scope. Fine-grained tokens can't reach a repo owned by another personal account.)
 
-### 4. Get a Claude API key
+### 4. Get a Claude API key (optional)
+
+Only needed for importing: pulling recipes and places out of links and posts. Without a key, a device can still browse, search, add by hand, rate and log. One key on the device that does the importing is enough.
 
 1. Go to [console.anthropic.com](https://console.anthropic.com) and create a key under **API Keys**.
 2. Under **Billing → Limits**, set a monthly spend limit (e.g. $10).
@@ -69,7 +71,7 @@ On each device, open the Pages URL, then:
 - **Your name:** "Mando" on yours, his name on his. Ratings and "we made this" entries are tagged by name.
 - **Data repo:** `infosystir/recipe-box-data`
 - **GitHub token:** that device's token
-- **Claude API key:** your key. Use **Load models** to pick from the models your key can use; the default is `claude-sonnet-4-5`.
+- **Claude API key (optional):** leave blank on devices that won't import. Use **Load models** to pick from the models your key can use; the default is `claude-sonnet-4-5`.
 
 Tap **Save & connect**. It will warn you if the data repo is accidentally public.
 
