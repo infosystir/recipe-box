@@ -288,6 +288,7 @@
         author,
         hint: [platform && `Saved on ${platform}`, coll && `in the "${coll}" collection`, author && `by ${author}`].filter(Boolean).join(' '),
         date: it.date || '',
+        image: typeof it.image === 'string' ? it.image : '',
         file: 'pasted list',
         score: 1 + recipeScore(title + ' ' + caption),
       };
@@ -501,18 +502,27 @@
     const seen = new Set([...d.recipes, ...d.restaurants].map((r) => r.id)); // includes deleted markers
     const recs = [];
     const places = [];
+    const photos = [];
     for (const c of listCandidates(text)) {
       if (!c.url) continue;
       const id = postId(c.url);
-      if (seen.has(id) || RB.store.hasPost(c.url)) continue;
+      const imageUrl = /^images\/[\w.-]+$/.test(c.image) ? 'repo:' + c.image : '';
+      if (seen.has(id)) {
+        // Photos can be added to the file after the post was synced; fill them in.
+        const old = imageUrl && (RB.store.get(id) || RB.store.get(id, 'restaurants'));
+        if (old && !old.imageUrl) photos.push([{ ...old, imageUrl }, RB.store.get(id) ? 'recipes' : 'restaurants']);
+        continue;
+      }
+      if (RB.store.hasPost(c.url)) continue;
       seen.add(id);
       const source = { type: c.sourceType, url: '', author: c.author, postUrl: c.url };
-      if (c.want === 'restaurant') places.push(RB.newRestaurant({ id, name: c.title, source, originalText: c.text, tags: ['saved post'] }));
-      else recs.push(RB.newRecipe({ id, title: c.title, source, originalText: c.text, needsRecipe: true, tags: c.want === 'auto' ? ['saved post', 'check type'] : ['saved post'] }));
+      if (c.want === 'restaurant') places.push(RB.newRestaurant({ id, imageUrl, name: c.title, source, originalText: c.text, tags: ['saved post'] }));
+      else recs.push(RB.newRecipe({ id, imageUrl, title: c.title, source, originalText: c.text, needsRecipe: true, tags: c.want === 'auto' ? ['saved post', 'check type'] : ['saved post'] }));
     }
     if (places.length) await RB.store.upsert(places, '', { defer: true, coll: 'restaurants' });
     if (recs.length) await RB.store.upsert(recs, '', { defer: true });
-    if (recs.length || places.length) await RB.store.save(`Add ${recs.length + places.length} saved posts`);
+    for (const [r, coll] of photos) await RB.store.upsert(r, '', { defer: true, coll });
+    if (recs.length || places.length || photos.length) await RB.store.save(recs.length + places.length ? `Add ${recs.length + places.length} saved posts` : `Add ${photos.length} photos`);
     return recs.length + places.length;
   }
 

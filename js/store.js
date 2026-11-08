@@ -61,6 +61,14 @@
       const p = path.split('/').map(encodeURIComponent).join('/');
       return `/repos/${this.repo}/contents/${p}` + (this.branch ? `?ref=${encodeURIComponent(this.branch)}` : '');
     }
+    /** Raw bytes of a file in the data repo (e.g. a photo), as a Blob. */
+    async readBlob(path) {
+      const res = await fetch('https://api.github.com' + this.contentsUrl(path), {
+        headers: { Authorization: 'Bearer ' + this.token, Accept: 'application/vnd.github.raw+json', 'X-GitHub-Api-Version': '2022-11-28' },
+      });
+      if (!res.ok) throw new HttpError(res.status, `GitHub ${res.status}: ${res.statusText}`);
+      return res.blob();
+    }
     /** Returns {text, sha} of any file in the data repo. */
     async readText(path) {
       const meta = await this.req('GET', this.contentsUrl(path));

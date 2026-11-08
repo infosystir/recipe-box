@@ -190,16 +190,51 @@
     return h('section', null, fillBanner(), controls, catBar, h('p', { class: 'count' }, `${list.length} of ${store.recipes.length} recipes`), body);
   }
 
+  // Photos saved in the private data repo ("repo:images/x.jpg") need the token, so they're fetched
+  // when they scroll into view and kept in the browser's cache.
+  const repoImgs = new Map();
+  function repoImage(path) {
+    if (!repoImgs.has(path)) {
+      const p = (async () => {
+        const key = 'https://recipe-box.local/' + path;
+        const cache = await caches.open('rb-images').catch(() => null);
+        let res = cache && (await cache.match(key));
+        if (!res) {
+          if (!store.backend || !store.backend.readBlob) throw new Error('no repo');
+          res = new Response(await store.backend.readBlob(path));
+          if (cache) await cache.put(key, res.clone()).catch(() => {}); // a full cache just means re-downloading later
+        }
+        return URL.createObjectURL(await res.blob());
+      })();
+      p.catch(() => repoImgs.delete(path)); // let a later render retry
+      repoImgs.set(path, p);
+    }
+    return repoImgs.get(path);
+  }
+  function photo(url, cls, fallback) {
+    const m = /^repo:(images\/[\w.-]+)$/.exec(url || '');
+    if (!m) {
+      const src = RB.safeUrl(url);
+      return src ? h('img', { class: cls, onerror: (e) => e.target.replaceWith(fallback()), alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', src }) : fallback();
+    }
+    const img = h('img', { class: cls, alt: '' });
+    const load = () => repoImage(m[1]).then((u) => (img.src = u), () => img.replaceWith(fallback()));
+    if (!('IntersectionObserver' in window)) load();
+    else {
+      const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { io.disconnect(); load(); } }, { rootMargin: '400px' });
+      io.observe(img);
+    }
+    return img;
+  }
+  const nothing = () => document.createComment('');
+
   function card(r) {
     const avg = avgRating(r);
     const made = (r.madeLog || []).length;
-    const img = RB.safeUrl(r.imageUrl);
     return h(
       'a',
       { class: 'card', href: '#/r/' + encodeURIComponent(r.id) },
-      img
-        ? h('img', { class: 'thumb', onerror: (e) => e.target.replaceWith(placeholder(r)), alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', src: img })
-        : placeholder(r),
+      photo(r.imageUrl, 'thumb', () => placeholder(r)),
       h('div', { class: 'card-body' },
         h('h3', null, r.favorite ? '♥ ' : '', r.title),
         h('div', { class: 'meta' }, avg ? stars(avg) : null, made ? h('span', { class: 'badge made' }, `Made ${made}×`) : null, r.needsRecipe ? h('span', { class: 'badge warn' }, 'Needs recipe') : null, r.wantToMake ? h('span', { class: 'badge' }, 'Want to make') : null),
@@ -229,7 +264,7 @@
     const src = r.source || {};
 
     const head = h('div', { class: 'recipe-head' },
-      RB.safeUrl(r.imageUrl) ? h('img', { class: 'hero', onerror: (e) => e.target.remove(), alt: '', referrerpolicy: 'no-referrer', src: r.imageUrl }) : null,
+      photo(r.imageUrl, 'hero', nothing),
       h('div', null,
         h('h1', null, r.title),
         r.description ? h('p', { class: 'desc' }, r.description) : null,
@@ -320,7 +355,7 @@
       if (!(r.tags || []).includes(NOT_FOUND)) await store.upsert({ ...r, tags: [...(r.tags || []), NOT_FOUND] }, 'Recipe not found: ' + r.title);
       return { found: false, message: res.message };
     }
-    const merged = { ...found, id: r.id, ratings: r.ratings, madeLog: r.madeLog, notes: [r.notes, found.notes].filter(Boolean).join('\n\n'), favorite: r.favorite, wantToMake: r.wantToMake, addedBy: r.addedBy, createdAt: r.createdAt, needsRecipe: false, originalText: [r.originalText, found.originalText].filter(Boolean).join('\n\n---\n\n') };
+    const merged = { ...found, imageUrl: found.imageUrl || r.imageUrl, id: r.id, ratings: r.ratings, madeLog: r.madeLog, notes: [r.notes, found.notes].filter(Boolean).join('\n\n'), favorite: r.favorite, wantToMake: r.wantToMake, addedBy: r.addedBy, createdAt: r.createdAt, needsRecipe: false, originalText: [r.originalText, found.originalText].filter(Boolean).join('\n\n---\n\n') };
     merged.tags = (merged.tags || []).filter((t) => t !== NOT_FOUND);
     merged.source = { ...found.source, postUrl: found.source.postUrl || r.source?.postUrl || '' };
     await store.upsert(merged, 'Finish ' + merged.title);
@@ -666,11 +701,10 @@
   function placeCard(p) {
     const avg = avgRating(p);
     const visits = (p.visits || []).length;
-    const img = RB.safeUrl(p.imageUrl);
     const fake = { title: p.name };
     const have = LINKS.filter(([k]) => k !== 'googleMaps' && p.links?.[k]).map(([, t]) => t);
     return h('a', { class: 'card', href: '#/p/' + encodeURIComponent(p.id) },
-      img ? h('img', { class: 'thumb', onerror: (e) => e.target.replaceWith(placeholder(fake)), alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', src: img }) : placeholder(fake),
+      photo(p.imageUrl, 'thumb', () => placeholder(fake)),
       h('div', { class: 'card-body' },
         h('h3', null, p.favorite ? '♥ ' : '', p.name),
         h('div', { class: 'meta small' }, placeLine(p)),
@@ -749,7 +783,7 @@
     return h('article', { class: 'recipe' },
       h('a', { href: '#/places', class: 'back' }, '← All restaurants'),
       h('div', { class: 'recipe-head' },
-        RB.safeUrl(p.imageUrl) ? h('img', { class: 'hero', onerror: (e) => e.target.remove(), alt: '', referrerpolicy: 'no-referrer', src: p.imageUrl }) : null,
+        photo(p.imageUrl, 'hero', nothing),
         h('div', null,
           h('h1', null, p.name),
           placeLine(p) ? h('p', { class: 'desc' }, placeLine(p)) : null,

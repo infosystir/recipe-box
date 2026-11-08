@@ -18,6 +18,11 @@ function ghRoute(route) {
   const json = (status, obj) => route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(obj) });
   if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
   if (url.pathname === '/repos/infosystir/recipe-box-data') return json(200, { full_name: 'infosystir/recipe-box-data', private: true, permissions: { push: true } });
+  if (url.pathname === '/repos/infosystir/recipe-box-data/contents/images/t.png') {
+    gh.imageGets = (gh.imageGets || 0) + 1;
+    // 1x1 PNG, served raw like GitHub does for Accept: application/vnd.github.raw+json
+    return route.fulfill({ status: 200, contentType: 'image/png', headers: { 'access-control-allow-origin': '*' }, body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64') });
+  }
   if (url.pathname === '/repos/infosystir/recipe-box-data/contents/imports/saved-posts.json') {
     if (!gh.imports) return json(404, { message: 'Not Found' });
     return json(200, { sha: 'imp1', content: b64(JSON.stringify(gh.imports)), encoding: 'base64' });
@@ -356,10 +361,14 @@ function proxyRoute(route) {
   await page.waitForSelector('.card:has-text("Repo chili")');
   await page.fill('#search', '');
   await page.waitForSelector('text=saved posts still need the actual recipe');
+  // a photo added to the file later gets attached to the existing stub and loads from the repo
+  gh.imports[0].image = 'images/t.png';
   await page.reload();
   await page.waitForSelector('text=Repo chili');
-  await page.waitForTimeout(500);
+  await page.waitForFunction(() => [...document.querySelectorAll('.card img.thumb')].some((i) => i.src.startsWith('blob:') && i.naturalWidth === 1));
+  await page.waitForFunction(() => document.getElementById('sync').textContent === '');
   assert.equal(countSp(), 1, 'no duplicate on reload');
+  assert.equal(JSON.parse(gh.content).recipes.find((r) => /^sp-/.test(r.id)).imageUrl, 'repo:images/t.png');
   await page.goto(BASE + '#/r/' + spStub.id);
   await page.click('button:has-text("Delete recipe")');
   await page.waitForFunction(() => document.getElementById('sync').textContent === '');
