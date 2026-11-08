@@ -1267,7 +1267,12 @@
 
   // Pick up the other person's changes when coming back to the tab.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && settings.isConfigured && store.status !== 'saving' && !store.dirty) store.load().catch(() => {});
+    if (document.visibilityState === 'visible' && settings.isConfigured && store.status !== 'saving' && !store.dirty) {
+      store.load()
+        .then(() => RB.bulk.syncSavedPosts())
+        .then((added) => added && toast(`Added ${added} saved posts.`))
+        .catch(() => {}); // offline or a failed refresh; the next visit retries
+    }
   });
 
   // ---------- boot ----------
