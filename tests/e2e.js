@@ -412,6 +412,18 @@ const geoCalls = [];
   await page.fill('#search', 'lakewood');
   await page.waitForFunction(() => [...document.querySelectorAll('.card h3')].map((e) => e.textContent).join() === 'Lakewood Arepas');
   await page.fill('#search', '');
+  // city filter is multi-select
+  const names = () => page.$$eval('.card h3', (els) => els.map((e) => e.textContent).sort().join());
+  await page.click('summary[aria-label=Cities]');
+  await page.check('.multi-menu label:has-text("Lakewood, OH") input');
+  await page.waitForFunction(() => [...document.querySelectorAll('.card h3')].map((e) => e.textContent).join() === 'Lakewood Arepas');
+  await page.check('.multi-menu label:has-text("Las Vegas, NV") input');
+  await page.waitForSelector('.card:has-text("Vegas Noodles")');
+  assert.equal(await names(), 'Lakewood Arepas,Vegas Noodles');
+  assert.equal(await page.textContent('summary[aria-label=Cities]'), '2 cities');
+  await page.click('.multi-menu button:has-text("Any city")');
+  await page.waitForFunction(() => document.querySelector('summary[aria-label=Cities]').textContent === 'Any city');
+  await page.click('summary[aria-label=Cities]');
   await page.waitForFunction(() => document.getElementById('sync').textContent === '');
   const lk = JSON.parse(gh.content).restaurants.find((r) => r.name === 'Lakewood Arepas');
   assert.equal(lk.address, '17900 Detroit Avenue');

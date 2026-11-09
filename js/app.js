@@ -635,7 +635,10 @@
     ['tiktok', 'TikTok'],
     ['googleMaps', 'Google Maps'],
   ];
-  const uiP = RB.storage.get('rb.uiP', { status: 'all', sort: 'recent', city: '', cuisine: '' });
+  const uiP = RB.storage.get('rb.uiP', { status: 'all', sort: 'recent', cities: [], cuisine: '' });
+  if (!Array.isArray(uiP.cities)) uiP.cities = uiP.city ? [uiP.city] : []; // older saves had one city
+  delete uiP.city;
+  let cityMenuOpen = false; // keeps the city picker open while ticking boxes (each tick re-renders)
   const saveUiP = () => RB.storage.set('rb.uiP', uiP);
 
   const lastVisit = (p) => (p.visits || []).reduce((a, v) => (v.date > a ? v.date : a), '');
@@ -685,7 +688,7 @@
       if (uiP.status === 'want' && been) return false;
       if (uiP.status === 'been' && !been) return false;
       if (uiP.status === 'fav' && !p.favorite) return false;
-      if (uiP.city && p.city !== uiP.city) return false;
+      if (uiP.cities.length && !uiP.cities.includes(p.city)) return false;
       if (uiP.cuisine && p.cuisine !== uiP.cuisine) return false;
       return true;
     });
@@ -701,6 +704,18 @@
     return list.map((x) => x.p);
   }
 
+  function cityPicker(cities) {
+    const n = uiP.cities.length;
+    const set = (list) => { uiP.cities = list; saveUiP(); render(); };
+    return h('details', { class: 'multi', open: cityMenuOpen, ontoggle: (e) => { cityMenuOpen = e.target.open; } },
+      h('summary', { 'aria-label': 'Cities' }, n === 0 ? 'Any city' : n === 1 ? uiP.cities[0] : `${n} cities`),
+      h('div', { class: 'multi-menu' },
+        n ? h('button', { type: 'button', class: 'linkish', onclick: () => set([]) }, 'Any city') : null,
+        cities.map((c) => h('label', { class: 'check' },
+          h('input', { type: 'checkbox', checked: uiP.cities.includes(c), onchange: (e) => set(e.target.checked ? [...uiP.cities, c] : uiP.cities.filter((x) => x !== c)) }),
+          c))));
+  }
+
   function viewPlaces() {
     setTitle('Restaurants');
     const count = (key) => {
@@ -714,7 +729,7 @@
     const controls = h('div', { class: 'controls' },
       h('select', { 'aria-label': 'Show', onchange: (e) => { uiP.status = e.target.value; saveUiP(); render(); } }, PLACE_STATUS.map(([v, t]) => h('option', { value: v, selected: uiP.status === v }, t))),
       h('select', { 'aria-label': 'Sort', onchange: (e) => { uiP.sort = e.target.value; saveUiP(); render(); } }, PLACE_SORT.map(([v, t]) => h('option', { value: v, selected: uiP.sort === v }, t))),
-      cities.length > 1 ? h('select', { 'aria-label': 'City', onchange: (e) => { uiP.city = e.target.value; saveUiP(); render(); } }, h('option', { value: '' }, 'Any city'), cities.map((c) => h('option', { value: c, selected: uiP.city === c }, c))) : null);
+      cities.length > 1 ? cityPicker(cities) : null);
     const cuisineBar = cuisines.length
       ? h('div', { class: 'chips scroll' }, cuisines.map((c) => chip(c, { active: uiP.cuisine === c, onclick: () => { uiP.cuisine = uiP.cuisine === c ? '' : c; saveUiP(); render(); } })))
       : null;
@@ -725,7 +740,7 @@
         h('p', null, 'Paste an Instagram or Facebook post about a place, or its website or Yelp link. Claude finds the website, socials, Yelp page, address and what to order.'),
         h('div', { class: 'row center' }, h('a', { href: '#/addplace', class: 'btn primary' }, 'Add a restaurant'), h('a', { href: '#/bulk', class: 'btn' }, 'Bulk import')));
     } else if (!list.length) {
-      body = h('div', { class: 'empty' }, h('p', null, 'No places match.'), h('button', { class: 'btn', type: 'button', onclick: () => { query = ''; searchEl.value = ''; Object.assign(uiP, { status: 'all', city: '', cuisine: '' }); saveUiP(); render(); } }, 'Clear filters'));
+      body = h('div', { class: 'empty' }, h('p', null, 'No places match.'), h('button', { class: 'btn', type: 'button', onclick: () => { query = ''; searchEl.value = ''; Object.assign(uiP, { status: 'all', cities: [], cuisine: '' }); saveUiP(); render(); } }, 'Clear filters'));
     } else {
       body = h('div', { class: 'grid' }, list.map(placeCard));
     }
