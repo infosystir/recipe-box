@@ -633,11 +633,12 @@
   let locating = ''; // progress text while restaurant positions are looked up
   const fmtMiles = (mi) => (mi < 10 ? mi.toFixed(1) : String(Math.round(mi))) + ' mi';
   function placeLine(p) {
-    const mi = RB.geo.distance(p, homePt);
+    const mi = RB.geo ? RB.geo.distance(p, homePt) : null; // geo.js can be missing while an old cached index.html is in use
     return [p.cuisine, p.priceRange, [p.neighborhood, p.city].filter(Boolean).join(', '), mi == null ? '' : fmtMiles(mi)].filter(Boolean).join(' · ');
   }
   /** Get the home point and any missing restaurant positions, then redraw the list if something changed. */
   function locatePlaces() {
+    if (!RB.geo) return;
     const redraw = () => { if (document.body.dataset.route === 'places') render(); };
     if (!homePt) RB.geo.homePoint().then((hp) => { if (hp) { homePt = hp; redraw(); } }).catch(() => {}); // no network: distances just stay hidden
     RB.geo.locateAll((n, total) => {
@@ -679,7 +680,7 @@
       lastvisit: (a, b) => lastVisit(b.p).localeCompare(lastVisit(a.p)),
       name: (a, b) => a.p.name.localeCompare(b.p.name),
       city: (a, b) => (a.p.city || '~').localeCompare(b.p.city || '~') || a.p.name.localeCompare(b.p.name),
-      near: (a, b) => (RB.geo.distance(a.p, homePt) ?? Infinity) - (RB.geo.distance(b.p, homePt) ?? Infinity) || a.p.name.localeCompare(b.p.name),
+      near: (a, b) => ((RB.geo && RB.geo.distance(a.p, homePt)) ?? Infinity) - ((RB.geo && RB.geo.distance(b.p, homePt)) ?? Infinity) || a.p.name.localeCompare(b.p.name),
     }[uiP.sort];
     list.sort((a, b) => (terms.length ? b.s - a.s : 0) || by(a, b));
     return list.map((x) => x.p);
