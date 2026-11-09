@@ -241,6 +241,15 @@ const geoCalls = [];
   assert.ok(data.recipes.find((r) => r.title === 'Creamy Tuscan Soup').favorite, 'our change kept');
   console.log('✓ concurrent edit merged (conflicts=' + gh.conflicts + ')');
 
+  // both people's ratings are visible: on the card and as read-only stars on the recipe page
+  await page.goto(BASE + '#/');
+  await page.waitForSelector('.card:has-text("Husband Hot Wings") .raters:has-text("Husband 5★")');
+  await page.click('.card:has-text("Husband Hot Wings")');
+  await page.waitForSelector('h1:has-text("Husband Hot Wings")');
+  await page.waitForSelector('.rating-row:has-text("Husband") [aria-label="Husband: 5 of 5 stars"]');
+  assert.ok(await page.$('.rating-row:has-text("Mando (you)") .stars.editable'), 'my stars are editable');
+  console.log('✓ each person sees the other one\'s ratings');
+
   // 8. cook mode
   await page.goto(BASE + '#/');
   await page.click('.card:has-text("Pasta")');

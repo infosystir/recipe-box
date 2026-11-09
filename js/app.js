@@ -46,6 +46,27 @@
     return wrap;
   }
 
+  /** Everyone who has rated anything (plus this device's person), you first. */
+  function people() {
+    const names = new Set([me()]);
+    for (const x of [...store.recipes, ...store.restaurants]) Object.keys(x.ratings || {}).forEach((k) => names.add(k));
+    return [...names].filter(Boolean);
+  }
+  /** One star row per person: yours to tap, the others read-only. */
+  function ratingRows(item, onSet) {
+    return people().map((name) => {
+      const v = item.ratings?.[name] || 0;
+      return h('div', { class: 'rating-row' },
+        h('span', { class: 'label' }, name === me() ? `${name} (you)` : name),
+        name === me() ? stars(v, onSet, 'Your rating') : v ? stars(v, null, `${name}: ${v} of 5 stars`) : h('span', { class: 'muted small' }, 'not rated yet'));
+    });
+  }
+  /** "Mando 5★ · Jon 4★" for cards. */
+  function ratingSummary(item) {
+    const r = Object.entries(item.ratings || {}).filter(([, v]) => v > 0);
+    return r.length ? h('span', { class: 'raters' }, r.map(([k, v]) => `${k} ${v}★`).join(' · ')) : null;
+  }
+
   function chip(text, opts = {}) {
     return h(opts.onclick ? 'button' : 'span', { class: 'chip' + (opts.active ? ' active' : '') + (opts.kind ? ' ' + opts.kind : ''), type: opts.onclick ? 'button' : undefined, onclick: opts.onclick }, text);
   }
@@ -229,7 +250,6 @@
   const nothing = () => document.createComment('');
 
   function card(r) {
-    const avg = avgRating(r);
     const made = (r.madeLog || []).length;
     return h(
       'a',
@@ -237,7 +257,7 @@
       photo(r.imageUrl, 'thumb', () => placeholder(r)),
       h('div', { class: 'card-body' },
         h('h3', null, r.favorite ? '♥ ' : '', r.title),
-        h('div', { class: 'meta' }, avg ? stars(avg) : null, made ? h('span', { class: 'badge made' }, `Made ${made}×`) : null, r.needsRecipe ? h('span', { class: 'badge warn' }, 'Needs recipe') : null, r.wantToMake ? h('span', { class: 'badge' }, 'Want to make') : null),
+        h('div', { class: 'meta' }, ratingSummary(r), made ? h('span', { class: 'badge made' }, `Made ${made}×`) : null, r.needsRecipe ? h('span', { class: 'badge warn' }, 'Needs recipe') : null, r.wantToMake ? h('span', { class: 'badge' }, 'Want to make') : null),
         h('div', { class: 'meta small' }, (r.categories || []).join(' · '), r.source?.type && r.source.type !== 'manual' ? h('span', { class: 'src' }, SOURCE_LABEL[r.source.type] || r.source.type) : null)
       )
     );
@@ -259,8 +279,6 @@
       store.upsert(copy, msg || 'Update ' + copy.title).catch((e) => toast(e.message, 'error'));
       render();
     };
-    const avg = avgRating(r);
-    const raters = Object.entries(r.ratings || {}).filter(([, v]) => v > 0);
     const src = r.source || {};
 
     const head = h('div', { class: 'recipe-head' },
@@ -274,10 +292,7 @@
           src.postUrl && src.postUrl !== src.url ? h('span', null, ' · ', h('a', { href: src.postUrl, target: '_blank', rel: 'noopener noreferrer' }, 'original post')) : null,
           r.addedBy ? h('span', { class: 'muted' }, ` · added by ${r.addedBy}`) : null),
         h('div', { class: 'chips' }, (r.categories || []).map((c) => chip(c, { onclick: () => { ui.cats = [c]; saveUi(); location.hash = '#/'; } })), (r.tags || []).map((t) => chip('#' + t, { kind: 'tag', onclick: () => { query = t; searchEl.value = t; location.hash = '#/'; } }))),
-        h('div', { class: 'rating-row' },
-          h('span', { class: 'label' }, `${me()}'s rating`),
-          stars(r.ratings?.[me()] || 0, (v) => update((c) => { c.ratings = { ...(c.ratings || {}), [me()]: v }; }, 'Rate ' + r.title), 'Your rating'),
-          raters.length > 1 || (raters.length === 1 && raters[0][0] !== me()) ? h('span', { class: 'muted' }, ' ', raters.map(([k, v]) => `${k} ${v}★`).join(' · '), ` (avg ${avg.toFixed(1)})`) : null),
+        ratingRows(r, (v) => update((c) => { c.ratings = { ...(c.ratings || {}), [me()]: v }; }, 'Rate ' + r.title)),
         h('div', { class: 'row wrap' },
           h('button', { class: 'btn' + (r.favorite ? ' active' : ''), type: 'button', onclick: () => update((c) => (c.favorite = !c.favorite)) }, r.favorite ? '♥ Favorite' : '♡ Favorite'),
           h('button', { class: 'btn' + (r.wantToMake ? ' active' : ''), type: 'button', onclick: () => update((c) => (c.wantToMake = !c.wantToMake)) }, r.wantToMake ? '✓ Want to make' : 'Want to make'),
@@ -719,7 +734,6 @@
   }
 
   function placeCard(p) {
-    const avg = avgRating(p);
     const visits = (p.visits || []).length;
     const fake = { title: p.name };
     const have = LINKS.filter(([k]) => k !== 'googleMaps' && p.links?.[k]).map(([, t]) => t);
@@ -728,7 +742,7 @@
       h('div', { class: 'card-body' },
         h('h3', null, p.favorite ? '♥ ' : '', p.name),
         h('div', { class: 'meta small' }, placeLine(p)),
-        h('div', { class: 'meta' }, avg ? stars(avg) : null, visits ? h('span', { class: 'badge made' }, `Been ${visits}×`) : h('span', { class: 'badge' }, 'Want to go')),
+        h('div', { class: 'meta' }, ratingSummary(p), visits ? h('span', { class: 'badge made' }, `Been ${visits}×`) : h('span', { class: 'badge' }, 'Want to go')),
         have.length ? h('div', { class: 'meta small' }, have.slice(0, 4).join(' · ')) : null));
   }
 
@@ -742,8 +756,6 @@
       store.upsert(copy, msg || 'Update ' + copy.name, { coll: 'restaurants' }).catch((e) => toast(e.message, 'error'));
       render();
     };
-    const avg = avgRating(p);
-    const raters = Object.entries(p.ratings || {}).filter(([, v]) => v > 0);
     const links = LINKS.map(([k, t]) => [t, k === 'googleMaps' ? mapsUrl(p) : p.links?.[k]]).filter(([, u]) => RB.safeUrl(u));
     const missing = LINKS.filter(([k]) => !['googleMaps', 'tiktok', 'menu', 'reservations'].includes(k) && !p.links?.[k]).length;
 
@@ -811,10 +823,7 @@
           p.address ? h('p', { class: 'source' }, h('a', { href: mapsUrl(p), target: '_blank', rel: 'noopener noreferrer' }, p.address)) : null,
           p.phone ? h('p', { class: 'source' }, h('a', { href: 'tel:' + p.phone.replace(/[^\d+]/g, '') }, p.phone)) : null,
           h('div', { class: 'chips' }, (p.tags || []).map((t) => chip('#' + t, { kind: 'tag', onclick: () => { query = t; searchEl.value = t; location.hash = '#/places'; } }))),
-          h('div', { class: 'rating-row' },
-            h('span', { class: 'label' }, `${me()}'s rating`),
-            stars(p.ratings?.[me()] || 0, (v) => update((c) => { c.ratings = { ...(c.ratings || {}), [me()]: v }; }, 'Rate ' + p.name), 'Your rating'),
-            raters.length > 1 || (raters.length === 1 && raters[0][0] !== me()) ? h('span', { class: 'muted' }, ' ', raters.map(([k, v]) => `${k} ${v}★`).join(' · '), ` (avg ${avg.toFixed(1)})`) : null),
+          ratingRows(p, (v) => update((c) => { c.ratings = { ...(c.ratings || {}), [me()]: v }; }, 'Rate ' + p.name)),
           h('div', { class: 'row wrap' },
             h('span', { class: 'badge ' + (visits.length ? 'made' : '') }, visits.length ? `Been ${visits.length}×` : 'Want to go'),
             h('button', { class: 'btn' + (p.favorite ? ' active' : ''), type: 'button', onclick: () => update((c) => (c.favorite = !c.favorite)) }, p.favorite ? '♥ Favorite' : '♡ Favorite'),
