@@ -402,6 +402,7 @@
       notes: p.notes || '',
       source: { type: p.source?.type || 'manual', url: p.source?.url || '', postUrl: p.source?.postUrl || '', author: p.source?.author || '' },
       originalText: p.originalText || '',
+      geo: p.geo && typeof p.geo.q === 'string' ? p.geo : null, // {q, lat, lon}; lat is null when the lookup found nothing
       addedBy: p.addedBy || '',
       createdAt: p.createdAt || '',
       updatedAt: p.updatedAt || '',

@@ -289,6 +289,7 @@
         hint: [platform && `Saved on ${platform}`, coll && `in the "${coll}" collection`, author && `by ${author}`].filter(Boolean).join(' '),
         date: it.date || '',
         image: typeof it.image === 'string' ? it.image : '',
+        place: { address: String(it.address || ''), city: String(it.city || ''), neighborhood: String(it.neighborhood || '') },
         file: 'pasted list',
         score: 1 + recipeScore(title + ' ' + caption),
       };
@@ -507,22 +508,28 @@
       if (!c.url) continue;
       const id = postId(c.url);
       const imageUrl = /^images\/[\w.-]+$/.test(c.image) ? 'repo:' + c.image : '';
+      const where = Object.fromEntries(Object.entries(c.place).filter(([, v]) => v));
       if (seen.has(id)) {
-        // Photos can be added to the file after the post was synced; fill them in.
-        const old = imageUrl && (RB.store.get(id) || RB.store.get(id, 'restaurants'));
-        if (old && !old.imageUrl) photos.push([{ ...old, imageUrl }, RB.store.get(id) ? 'recipes' : 'restaurants']);
+        // Photos and locations can be added to the file after the post was synced; fill them in.
+        const coll = RB.store.get(id) ? 'recipes' : 'restaurants';
+        const old = RB.store.get(id, coll);
+        if (!old) continue;
+        const patch = {};
+        if (imageUrl && !old.imageUrl) patch.imageUrl = imageUrl;
+        if (coll === 'restaurants' && !old.city && !old.address) Object.assign(patch, where);
+        if (Object.keys(patch).length) photos.push([{ ...old, ...patch }, coll]);
         continue;
       }
       if (RB.store.hasPost(c.url)) continue;
       seen.add(id);
       const source = { type: c.sourceType, url: '', author: c.author, postUrl: c.url };
-      if (c.want === 'restaurant') places.push(RB.newRestaurant({ id, imageUrl, name: c.title, source, originalText: c.text, tags: ['saved post'] }));
+      if (c.want === 'restaurant') places.push(RB.newRestaurant({ id, imageUrl, ...where, name: c.title, source, originalText: c.text, tags: ['saved post'] }));
       else recs.push(RB.newRecipe({ id, imageUrl, title: c.title, source, originalText: c.text, needsRecipe: true, tags: c.want === 'auto' ? ['saved post', 'check type'] : ['saved post'] }));
     }
     if (places.length) await RB.store.upsert(places, '', { defer: true, coll: 'restaurants' });
     if (recs.length) await RB.store.upsert(recs, '', { defer: true });
     for (const [r, coll] of photos) await RB.store.upsert(r, '', { defer: true, coll });
-    if (recs.length || places.length || photos.length) await RB.store.save(recs.length + places.length ? `Add ${recs.length + places.length} saved posts` : `Add ${photos.length} photos`);
+    if (recs.length || places.length || photos.length) await RB.store.save(recs.length + places.length ? `Add ${recs.length + places.length} saved posts` : `Update ${photos.length} saved posts`);
     return recs.length + places.length;
   }
 

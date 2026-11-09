@@ -100,6 +100,7 @@ function proxyRoute(route) {
   return route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: 'no' });
 }
 
+const geoCalls = [];
 (async () => {
   const browser = await chromium.launch();
   const errors = [];
@@ -108,6 +109,14 @@ function proxyRoute(route) {
     await ctx.route('https://api.anthropic.com/**', claudeRoute);
     await ctx.route('https://proxy.test/**', proxyRoute);
     await ctx.route(/^https:\/\/(?!api\.|proxy\.test).*/, (r) => r.abort());
+    // fake OpenStreetMap lookups (registered last so it wins over the abort above)
+    await ctx.route('https://nominatim.openstreetmap.org/**', (r) => {
+      const u = new URL(r.request().url());
+      const q = (u.searchParams.get('q') || '') + ' ' + (u.searchParams.get('postalcode') || '');
+      geoCalls.push(q.trim());
+      const hit = /43440/.test(q) ? [41.54, -82.73] : /Lakewood/.test(q) ? [41.48, -81.8] : /Las Vegas/.test(q) ? [36.17, -115.14] : null;
+      r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(hit ? [{ lat: String(hit[0]), lon: String(hit[1]) }] : []) });
+    });
   }
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   await setup(ctx);
@@ -376,6 +385,36 @@ function proxyRoute(route) {
   await page.waitForTimeout(800);
   assert.equal(countSp(), 0, 'deleted saved post stays deleted');
   console.log('✓ saved posts auto-added from data repo');
+
+  // restaurants from saved posts get their location, a distance from home, nearest-first sort and area search
+  const priorImports = gh.imports;
+  gh.imports = [
+    { url: 'https://www.instagram.com/p/VEGAS1/', platform: 'instagram', type: 'restaurant', title: 'Vegas Noodles', caption: 'noodles on tap', city: 'Las Vegas, NV' },
+    { url: 'https://www.instagram.com/p/LKWD1/', platform: 'instagram', type: 'restaurant', title: 'Lakewood Arepas', caption: 'great arepas', address: '17900 Detroit Avenue', city: 'Lakewood, OH' },
+  ];
+  await page.goto(BASE + '#/places');
+  await page.reload();
+  await page.waitForSelector('text=Added 2 saved posts');
+  await page.waitForSelector('.card:has-text("Lakewood Arepas") >> text=/Lakewood, OH · \\d+ mi/', { timeout: 15000 });
+  await page.waitForSelector('.card:has-text("Vegas Noodles") >> text=/Las Vegas, NV · \\d+ mi/', { timeout: 15000 });
+  await page.selectOption('select[aria-label=Sort]', 'near');
+  const order = await page.$$eval('.card h3', (els) => els.map((e) => e.textContent));
+  assert.ok(order.indexOf('Lakewood Arepas') < order.indexOf('Vegas Noodles'), 'nearest first: ' + order);
+  await page.fill('#search', 'lakewood');
+  await page.waitForFunction(() => [...document.querySelectorAll('.card h3')].map((e) => e.textContent).join() === 'Lakewood Arepas');
+  await page.fill('#search', '');
+  await page.waitForFunction(() => document.getElementById('sync').textContent === '');
+  const lk = JSON.parse(gh.content).restaurants.find((r) => r.name === 'Lakewood Arepas');
+  assert.equal(lk.address, '17900 Detroit Avenue');
+  assert.ok(lk.geo && lk.geo.lat === 41.48, JSON.stringify(lk.geo));
+  const callsBefore = geoCalls.length;
+  await page.reload();
+  await page.waitForSelector('.card:has-text("Lakewood Arepas") >> text=/\\d+ mi/');
+  await page.waitForTimeout(1500);
+  assert.equal(geoCalls.length, callsBefore, 'positions and home are cached, no new lookups');
+  await page.selectOption('select[aria-label=Sort]', 'recent');
+  gh.imports = priorImports;
+  console.log('✓ restaurant locations, distance from home, nearest sort, area search');
 
   await page.goto(BASE + '#/bulk');
   await page.click('button:has-text("Load saved posts from the data repo")');

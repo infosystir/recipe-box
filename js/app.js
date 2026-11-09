@@ -608,6 +608,7 @@
     ['lastvisit', 'Recently visited'],
     ['name', 'A–Z'],
     ['city', 'By city'],
+    ['near', 'Nearest to home'],
   ];
   const LINKS = [
     ['website', 'Website'],
@@ -628,8 +629,24 @@
     const q = [p.name, p.address || p.neighborhood, p.city].filter(Boolean).join(', ');
     return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
   }
+  let homePt = null; // {zip, lat, lon} for Settings → Home ZIP
+  let locating = ''; // progress text while restaurant positions are looked up
+  const fmtMiles = (mi) => (mi < 10 ? mi.toFixed(1) : String(Math.round(mi))) + ' mi';
   function placeLine(p) {
-    return [p.cuisine, p.priceRange, [p.neighborhood, p.city].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+    const mi = RB.geo.distance(p, homePt);
+    return [p.cuisine, p.priceRange, [p.neighborhood, p.city].filter(Boolean).join(', '), mi == null ? '' : fmtMiles(mi)].filter(Boolean).join(' · ');
+  }
+  /** Get the home point and any missing restaurant positions, then redraw the list if something changed. */
+  function locatePlaces() {
+    const redraw = () => { if (document.body.dataset.route === 'places') render(); };
+    if (!homePt) RB.geo.homePoint().then((hp) => { if (hp) { homePt = hp; redraw(); } }).catch(() => {}); // no network: distances just stay hidden
+    RB.geo.locateAll((n, total) => {
+      locating = ` · Finding locations… ${n} of ${total}`;
+      const el = document.getElementById('locating');
+      if (el) el.textContent = locating;
+    })
+      .then((n) => { locating = ''; if (n) redraw(); })
+      .catch(() => { locating = ''; });
   }
 
   function filteredPlaces() {
@@ -662,6 +679,7 @@
       lastvisit: (a, b) => lastVisit(b.p).localeCompare(lastVisit(a.p)),
       name: (a, b) => a.p.name.localeCompare(b.p.name),
       city: (a, b) => (a.p.city || '~').localeCompare(b.p.city || '~') || a.p.name.localeCompare(b.p.name),
+      near: (a, b) => (RB.geo.distance(a.p, homePt) ?? Infinity) - (RB.geo.distance(b.p, homePt) ?? Infinity) || a.p.name.localeCompare(b.p.name),
     }[uiP.sort];
     list.sort((a, b) => (terms.length ? b.s - a.s : 0) || by(a, b));
     return list.map((x) => x.p);
@@ -695,7 +713,8 @@
     } else {
       body = h('div', { class: 'grid' }, list.map(placeCard));
     }
-    return h('section', null, controls, cuisineBar, h('p', { class: 'count' }, `${list.length} of ${store.restaurants.length} places`), body);
+    locatePlaces();
+    return h('section', null, controls, cuisineBar, h('p', { class: 'count' }, `${list.length} of ${store.restaurants.length} places`, h('span', { id: 'locating' }, locating)), body);
   }
 
   function placeCard(p) {
@@ -1072,6 +1091,7 @@
       claudeKey: h('input', { type: 'password', value: s.claudeKey, placeholder: 'sk-ant-…', autocomplete: 'off' }),
       claudeModel: h('input', { type: 'text', value: s.claudeModel, list: 'model-list' }),
       useWebTools: h('input', { type: 'checkbox', checked: s.useWebTools }),
+      homeZip: h('input', { type: 'text', inputmode: 'numeric', value: s.homeZip, placeholder: '43440', autocomplete: 'postal-code' }),
       proxyUrl: h('input', { type: 'url', value: s.proxyUrl, placeholder: 'https://recipe-proxy.you.workers.dev/?key=…&url=' }),
     };
     const modelList = h('datalist', { id: 'model-list' });
@@ -1115,6 +1135,7 @@
       claudeModel: f.claudeModel.value.trim() || 'claude-sonnet-4-5',
       useWebTools: f.useWebTools.checked,
       proxyUrl: f.proxyUrl.value.trim(),
+      homeZip: f.homeZip.value.trim(),
     });
 
     const form = h('form', { class: 'settings', onsubmit: async (e) => {
@@ -1143,6 +1164,7 @@
       h('h2', null, 'Where recipes are stored'),
       field('Storage', f.mode, 'Choose “Private GitHub repo” so you both see the same recipes.'),
       gh,
+      field('Home ZIP code', f.homeZip, 'Restaurants show how far they are from here, and can be sorted by nearest.'),
       h('h2', null, 'Importing'),
       field('Claude API key (optional)', f.claudeKey, 'Only needed to pull recipes and places from links and posts. Without it you can still browse, search, add by hand, rate and log. From console.anthropic.com; set a monthly spend limit there. Stored only in this browser.'),
       h('div', { class: 'row' }, field('Model', f.claudeModel), h('button', { class: 'btn small', type: 'button', onclick: async () => {

@@ -126,6 +126,7 @@
     claudeKey: '',
     claudeModel: 'claude-sonnet-4-5',
     useWebTools: true,
+    homeZip: '43440', // restaurants show how far away they are from here
     proxyUrl: '', // optional, e.g. https://recipe-proxy.you.workers.dev/?key=SECRET&url=
   };
   const settings = {
